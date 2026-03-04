@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <h1>Vivaldi Synopsis Extension</h1>
+      <p class="sub">Configure providers, LLM behavior, and privacy mode.</p>
+
+      <section class="group">
+        <h2>API Keys</h2>
+        <label>
+          OpenRouter API Key
+          <input id="openrouterApiKey" type="password" autocomplete="off" />
+        </label>
+        <label>
+          OpenRouter Model
+          <input id="openrouterModel" type="text" autocomplete="off" />
+        </label>
+        <label>
+          TMDB API Key
+          <input id="tmdbApiKey" type="password" autocomplete="off" />
+        </label>
+      </section>
+
+      <section class="group">
+        <h2>Behavior</h2>
+        <label class="check"><input id="llmEnabled" type="checkbox" /> Enable LLM rewriting</label>
+        <label class="check"><input id="llmPreferred" type="checkbox" /> Prefer LLM by default</label>
+        <label class="check"><input id="localOnlyMode" type="checkbox" /> Local-only mode (cache only)</label>
+      </section>
+
+      <section class="group">
+        <h2>Providers</h2>
+        <label class="check"><input id="providerOpenLibrary" type="checkbox" /> Open Library (books)</label>
+        <label class="check"><input id="providerTmdb" type="checkbox" /> TMDB (movies/TV)</label>
+        <label class="check"><input id="providerWikipedia" type="checkbox" /> Wikipedia fallback</label>
+      </section>
+
+      <div class="actions">
+        <button id="saveBtn" type="button">Save Settings</button>
+        <button id="clearCacheBtn" type="button" class="ghost">Delete Cached Data</button>
+      </div>
+
+      <p id="status" class="status" role="status"></p>
+    </main>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

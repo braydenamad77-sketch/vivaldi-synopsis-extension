@@ -1,0 +1,173 @@
+#vivaldi-synopsis-root {
+  all: initial;
+}
+
+#vivaldi-synopsis-card.vs-card {
+  --vs-bg-a: rgba(55, 47, 44, 0.93);
+  --vs-bg-b: rgba(31, 30, 33, 0.94);
+  --vs-border: rgba(184, 170, 148, 0.24);
+  --vs-text: #efe6dc;
+  --vs-muted: #cbc0b4;
+  --vs-chip-bg: rgba(132, 158, 203, 0.17);
+  --vs-chip-border: rgba(171, 191, 230, 0.27);
+  --vs-chip-text: #dbe6f5;
+  --vs-danger: #f4c2be;
+
+  position: absolute;
+  z-index: 2147483647;
+  width: min(360px, calc(100vw - 20px));
+  border-radius: 18px;
+  border: 1px solid var(--vs-border);
+  background:
+    radial-gradient(circle at 80% -10%, rgba(217, 188, 152, 0.14), transparent 42%),
+    linear-gradient(155deg, var(--vs-bg-a), var(--vs-bg-b));
+  box-shadow:
+    0 30px 50px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  color: var(--vs-text);
+  padding: 14px 14px 12px;
+  font-family: "Avenir Next", "Gill Sans Nova", "Segoe UI", sans-serif;
+  animation: vs-fade-in 190ms ease-out;
+  backdrop-filter: blur(12px);
+}
+
+#vivaldi-synopsis-card .vs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#vivaldi-synopsis-card .vs-title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 620;
+  letter-spacing: 0.2px;
+}
+
+#vivaldi-synopsis-card .vs-close {
+  appearance: none;
+  border: 1px solid rgba(201, 185, 162, 0.26);
+  border-radius: 999px;
+  width: 24px;
+  height: 24px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 17px;
+  color: var(--vs-text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+#vivaldi-synopsis-card .vs-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+#vivaldi-synopsis-card .vs-sub,
+#vivaldi-synopsis-card .vs-foot,
+#vivaldi-synopsis-card .vs-error,
+#vivaldi-synopsis-card .vs-synopsis {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.43;
+  color: var(--vs-muted);
+}
+
+#vivaldi-synopsis-card .vs-synopsis {
+  color: var(--vs-text);
+}
+
+#vivaldi-synopsis-card .vs-foot {
+  font-size: 11px;
+  color: #b8ab9d;
+}
+
+#vivaldi-synopsis-card .vs-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+#vivaldi-synopsis-card .vs-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  letter-spacing: 0.28px;
+  text-transform: uppercase;
+  color: var(--vs-chip-text);
+  background: var(--vs-chip-bg);
+  border: 1px solid var(--vs-chip-border);
+}
+
+#vivaldi-synopsis-card .vs-shimmer {
+  margin-top: 12px;
+  height: 56px;
+  border-radius: 11px;
+  background:
+    linear-gradient(
+      110deg,
+      rgba(255, 255, 255, 0.05) 8%,
+      rgba(255, 255, 255, 0.19) 20%,
+      rgba(255, 255, 255, 0.05) 33%
+    );
+  background-size: 200% 100%;
+  animation: vs-shimmer 1.2s linear infinite;
+}
+
+#vivaldi-synopsis-card .vs-candidate-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+#vivaldi-synopsis-card .vs-candidate {
+  appearance: none;
+  border: 1px solid rgba(174, 196, 232, 0.28);
+  border-radius: 11px;
+  background: rgba(132, 158, 203, 0.14);
+  color: var(--vs-text);
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+#vivaldi-synopsis-card .vs-candidate:hover {
+  background: rgba(167, 189, 227, 0.22);
+  border-color: rgba(191, 211, 243, 0.36);
+}
+
+#vivaldi-synopsis-card .vs-error {
+  color: var(--vs-danger);
+}
+
+@media (max-width: 560px) {
+  #vivaldi-synopsis-card.vs-card {
+    width: calc(100vw - 14px);
+    left: 7px !important;
+  }
+}
+
+@keyframes vs-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes vs-shimmer {
+  to {
+    background-position-x: -200%;
+  }
+}

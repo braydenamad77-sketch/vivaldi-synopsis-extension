@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="18" y1="10" x2="110" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4A3D39"/>
+      <stop offset="1" stop-color="#262429"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(94 18) rotate(124) scale(132 118)">
+      <stop stop-color="#CDAF87" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#CDAF87" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="sGrad" x1="34" y1="24" x2="91" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EFE5D8"/>
+      <stop offset="0.55" stop-color="#CFC2B1"/>
+      <stop offset="1" stop-color="#AFC1E3"/>
+    </linearGradient>
+    <linearGradient id="bookGrad" x1="43" y1="89" x2="87" y2="105" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4D8C8"/>
+      <stop offset="1" stop-color="#AFC1E3"/>
+    </linearGradient>
+    <filter id="softShadow" x="12" y="10" width="104" height="110" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="5" stdDeviation="4" flood-color="#000000" flood-opacity="0.33"/>
+    </filter>
+  </defs>
+
+  <rect x="6" y="6" width="116" height="116" rx="27" fill="url(#bgGrad)"/>
+  <rect x="6" y="6" width="116" height="116" rx="27" fill="url(#glow)"/>
+  <rect x="6.5" y="6.5" width="115" height="115" rx="26.5" stroke="rgba(207,186,156,0.34)"/>
+
+  <g filter="url(#softShadow)">
+    <path
+      d="M88 29.5C79.5 20.2 66.4 17.6 54.3 21.4C43.7 24.8 36.4 33.2 36.2 43C36 53.7 44.8 59.6 57 63.1C70.1 66.9 81.9 69.4 81.8 79.4C81.7 88.4 73.7 94.9 62.8 95.9C53.4 96.8 44.6 93.3 38.3 86"
+      stroke="url(#sGrad)"
+      stroke-width="12.5"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Film-strip cue integrated into top of S -->
+    <rect x="59.8" y="24" width="4.7" height="4.7" rx="1.2" fill="#2A292D"/>
+    <rect x="66.9" y="24.8" width="4.7" height="4.7" rx="1.2" fill="#2A292D"/>
+    <rect x="74" y="26.3" width="4.7" height="4.7" rx="1.2" fill="#2A292D"/>
+
+    <!-- Open-book motif fused into lower S tail -->
+    <path d="M43 93.4C49.9 88.7 57.7 88 64 92.2V105.1C57.8 101 50.1 101.4 43 106.1V93.4Z" fill="url(#bookGrad)"/>
+    <path d="M85 93.4C78.1 88.7 70.3 88 64 92.2V105.1C70.2 101 77.9 101.4 85 106.1V93.4Z" fill="url(#bookGrad)"/>
+    <path d="M64 92.2V105.1" stroke="#2E2C31" stroke-opacity="0.46" stroke-width="1.8"/>
+
+    <!-- Subtle movie reel cue -->
+    <circle cx="50" cy="34" r="4.2" fill="#B8C9E9" fill-opacity="0.75"/>
+    <circle cx="50" cy="34" r="1.2" fill="#2B2A2F"/>
+  </g>
+</svg>
