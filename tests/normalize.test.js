@@ -10,6 +10,13 @@ test("normalizeQuery extracts year and strips it from query", () => {
   assert.equal(normalized.query, "Dune movie");
 });
 
+test("normalizeQuery strips trailing context noise from highlighted video titles", () => {
+  const normalized = normalizeQuery("Set It Up (2018) - Movie Night #191 FULL");
+
+  assert.equal(normalized.hintYear, 2018);
+  assert.equal(normalized.query, "Set It Up");
+});
+
 test("detectHintType identifies media hints", () => {
   assert.equal(detectHintType("best sci fi book"), "book");
   assert.equal(detectHintType("classic tv show"), "tv");

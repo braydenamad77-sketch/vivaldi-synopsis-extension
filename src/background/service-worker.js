@@ -1,35 +1,78 @@
-import { MENU_ID } from "../config/constants.js";
+import {
+  MENU_LABEL_LOOKUP_MANUAL,
+  MENU_LABEL_LOOKUP_SELECTION,
+  MENU_LOOKUP_MANUAL,
+  MENU_LOOKUP_SELECTION,
+} from "../config/constants.js";
 import { lookupSynopsis, resolveAmbiguity } from "./router.js";
 
+const DEBUG_LOGS = true;
+
+function swLog(...args) {
+  if (!DEBUG_LOGS) return;
+  console.log("[VS][SW]", ...args);
+}
+
 async function createContextMenu() {
-  chrome.contextMenus.remove(MENU_ID, () => {
-    // This is expected on first run when the item does not exist yet.
-    void chrome.runtime.lastError;
+  swLog("createContextMenu:start");
+  chrome.contextMenus.removeAll(() => {
+    // This can fail during startup races; safe to ignore and still try creates.
+    if (chrome.runtime?.lastError) {
+      swLog("createContextMenu:removeAll:lastError", chrome.runtime.lastError.message);
+    }
 
     chrome.contextMenus.create(
       {
-        id: MENU_ID,
-        title: "Get Synopsis",
+        id: MENU_LOOKUP_SELECTION,
+        title: MENU_LABEL_LOOKUP_SELECTION,
         contexts: ["selection"],
       },
       () => {
         // Ignore duplicate creation during rapid extension reloads.
-        void chrome.runtime.lastError;
+        if (chrome.runtime?.lastError) {
+          swLog("createContextMenu:createSelection:lastError", chrome.runtime.lastError.message);
+        } else {
+          swLog("createContextMenu:createSelection:ok");
+        }
+      },
+    );
+
+    chrome.contextMenus.create(
+      {
+        id: MENU_LOOKUP_MANUAL,
+        title: MENU_LABEL_LOOKUP_MANUAL,
+        contexts: ["page"],
+      },
+      () => {
+        if (chrome.runtime?.lastError) {
+          swLog("createContextMenu:createManual:lastError", chrome.runtime.lastError.message);
+        } else {
+          swLog("createContextMenu:createManual:ok");
+        }
       },
     );
   });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  createContextMenu();
-});
+if (chrome?.runtime?.onInstalled?.addListener) {
+  chrome.runtime.onInstalled.addListener(() => {
+    swLog("runtime:onInstalled");
+    createContextMenu();
+  });
+}
 
-chrome.runtime.onStartup.addListener(() => {
-  createContextMenu();
-});
+if (chrome?.runtime?.onStartup?.addListener) {
+  chrome.runtime.onStartup.addListener(() => {
+    swLog("runtime:onStartup");
+    createContextMenu();
+  });
+}
+
+swLog("runtime:boot");
 createContextMenu();
 
-async function ensureUiAssets(tabId) {
+async function injectUiAssets(tabId) {
+  swLog("injectUiAssets:start", { tabId });
   await chrome.scripting.insertCSS({
     target: { tabId },
     files: ["src/content/card.css"],
@@ -39,13 +82,87 @@ async function ensureUiAssets(tabId) {
     target: { tabId },
     files: ["src/content/inject-card.js"],
   });
+  swLog("injectUiAssets:ok", { tabId });
 }
 
 function safeSendMessage(tabId, payload) {
   if (!tabId) return;
   chrome.tabs.sendMessage(tabId, payload, () => {
-    void chrome.runtime.lastError;
+    if (chrome.runtime?.lastError) {
+      swLog("safeSendMessage:lastError", {
+        tabId,
+        type: payload?.type,
+        message: chrome.runtime.lastError.message,
+      });
+    }
   });
+}
+
+function sendMessageWithAck(tabId, payload) {
+  if (!tabId) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, payload, (response) => {
+      if (chrome.runtime?.lastError) {
+        swLog("sendMessageWithAck:lastError", {
+          tabId,
+          type: payload?.type,
+          message: chrome.runtime.lastError.message,
+        });
+        resolve(false);
+        return;
+      }
+      swLog("sendMessageWithAck:response", { tabId, type: payload?.type, response });
+      resolve(Boolean(response?.ok));
+    });
+  });
+}
+
+async function ensureUiAssets(tabId) {
+  if (!tabId) return false;
+
+  const alreadyReady = await sendMessageWithAck(tabId, { type: "VS_PING" });
+  if (alreadyReady) {
+    swLog("ensureUiAssets:alreadyReady", { tabId });
+    return true;
+  }
+
+  try {
+    await injectUiAssets(tabId);
+  } catch (error) {
+    swLog("ensureUiAssets:inject:failed", {
+      tabId,
+      message: error?.message || String(error),
+    });
+    return false;
+  }
+
+  const readyAfterInject = await sendMessageWithAck(tabId, { type: "VS_PING" });
+  swLog("ensureUiAssets:readyAfterInject", { tabId, readyAfterInject });
+  return readyAfterInject;
+}
+
+async function showManualSearchInput(tabId) {
+  if (!tabId) return;
+  swLog("showManualSearchInput:start", { tabId });
+
+  const ready = await ensureUiAssets(tabId);
+  if (!ready) {
+    swLog("showManualSearchInput:uiNotReady", { tabId });
+    return;
+  }
+
+  let delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
+  swLog("showManualSearchInput:firstAck", { tabId, delivered });
+  if (delivered) return;
+
+  // Retry once in case a page blocks/defers message handlers momentarily.
+  delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
+  swLog("showManualSearchInput:retryAck", { tabId, delivered });
+  if (!delivered) {
+    swLog("showManualSearchInput:fallbackSendWithoutAck", { tabId });
+    safeSendMessage(tabId, { type: "SHOW_SEARCH_INPUT" });
+  }
 }
 
 async function processLookup(selectionText, tabId) {
@@ -73,6 +190,7 @@ async function processLookup(selectionText, tabId) {
       type: "SHOW_RESULT",
       requestId,
       result: response.result,
+      autoResolved: true,
     });
     return;
   }
@@ -83,6 +201,7 @@ async function processLookup(selectionText, tabId) {
       requestId: response.requestId,
       candidates: response.candidates,
       originalQuery: selectionText,
+      note: response.note,
     });
     return;
   }
@@ -95,33 +214,81 @@ async function processLookup(selectionText, tabId) {
   });
 }
 
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId !== MENU_ID) return;
-  if (!info.selectionText || !tab?.id) return;
+if (chrome?.contextMenus?.onClicked?.addListener) {
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+    swLog("contextMenus:onClicked", {
+      menuItemId: info?.menuItemId,
+      hasSelectionText: Boolean(info?.selectionText),
+      pageUrl: info?.pageUrl,
+      tabId: tab?.id,
+      tabUrl: tab?.url,
+    });
 
-  try {
-    await ensureUiAssets(tab.id);
-  } catch (_error) {
-    return;
-  }
+    if (!tab?.id) return;
 
-  await processLookup(info.selectionText, tab.id);
-});
+    if (info.menuItemId === MENU_LOOKUP_SELECTION) {
+      if (!info.selectionText) return;
+      const ready = await ensureUiAssets(tab.id);
+      if (!ready) {
+        swLog("contextMenus:onClicked:selection:uiNotReady", { tabId: tab.id });
+        return;
+      }
+      await processLookup(info.selectionText, tab.id);
+      return;
+    }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type !== "RESOLVE_AMBIGUITY") {
-    return false;
-  }
+    if (info.menuItemId === MENU_LOOKUP_MANUAL) {
+      await showManualSearchInput(tab.id);
+    }
+  });
+}
 
-  resolveAmbiguity(message)
-    .then((response) => sendResponse(response))
-    .catch((error) =>
-      sendResponse({
-        status: "error",
-        errorCode: "AMBIGUITY_RESOLVE_FAILED",
-        message: error?.message || "Could not resolve selection.",
-      }),
-    );
+if (chrome?.runtime?.onMessage?.addListener) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    swLog("runtime:onMessage", {
+      type: message?.type,
+      tabId: sender?.tab?.id,
+      tabUrl: sender?.tab?.url,
+    });
 
-  return true;
-});
+    if (message?.type === "RUN_LOOKUP_QUERY") {
+      const tabId = sender?.tab?.id;
+      const query = String(message.query || "").trim();
+
+      if (!tabId || !query) {
+        sendResponse({
+          status: "error",
+          errorCode: "INVALID_QUERY",
+          message: "Type a title first.",
+        });
+        return false;
+      }
+
+      processLookup(query, tabId)
+        .then(() => sendResponse({ status: "ok" }))
+        .catch((error) =>
+          sendResponse({
+            status: "error",
+            errorCode: "LOOKUP_FAILED",
+            message: error?.message || "Lookup failed.",
+          }),
+        );
+
+      return true;
+    }
+
+    if (message?.type !== "RESOLVE_AMBIGUITY") return false;
+
+    resolveAmbiguity(message)
+      .then((response) => sendResponse(response))
+      .catch((error) =>
+        sendResponse({
+          status: "error",
+          errorCode: "AMBIGUITY_RESOLVE_FAILED",
+          message: error?.message || "Could not resolve selection.",
+        }),
+      );
+
+    return true;
+  });
+}

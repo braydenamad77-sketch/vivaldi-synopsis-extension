@@ -4,6 +4,24 @@ const MEDIA_HINTS = {
   tv: /\b(tv|series|show|episode|season)\b/i,
 };
 
+function stripLikelyContextNoise(text) {
+  let result = text || "";
+
+  // Remove common YouTube-like trailing descriptors after separators.
+  result = result.replace(
+    /\s*[-|:]\s*(movie night.*|official trailer.*|trailer.*|teaser.*|clip.*|reaction.*|recap.*|review.*|ending explained.*|explained.*|full)$/i,
+    "",
+  );
+
+  // Remove hash episode markers and anything after them.
+  result = result.replace(/\s+#\d+.*$/i, "");
+
+  // Remove trailing noise tokens that are often not part of titles.
+  result = result.replace(/\s+(full|official|trailer|reaction|recap|review|explained)$/i, "");
+
+  return result.trim();
+}
+
 export function normalizeQuery(raw) {
   const input = typeof raw === "string" ? raw : "";
   const compact = input.replace(/\s+/g, " ").trim();
@@ -23,6 +41,8 @@ export function normalizeQuery(raw) {
       .replace(/\s{2,}/g, " ")
       .trim();
   }
+
+  query = stripLikelyContextNoise(query);
 
   const hintType = detectHintType(compact);
   const cleaned = query.slice(0, 120);
@@ -52,7 +72,7 @@ export function normalizeTitleForCompare(value) {
 }
 
 export function buildCacheKey(normalizedQuery) {
-  return `cache:${hashString(normalizedQuery.query || normalizedQuery.raw || "")}`;
+  return `cache:v2:${hashString(normalizedQuery.query || normalizedQuery.raw || "")}`;
 }
 
 export function hashString(value) {

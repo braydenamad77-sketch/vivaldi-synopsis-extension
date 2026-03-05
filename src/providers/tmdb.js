@@ -1,6 +1,7 @@
 import { REQUEST_TIMEOUT_MS } from "../config/constants.js";
 
 const TMDB_BASE = "https://api.themoviedb.org/3";
+const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 
 async function fetchJson(url, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -23,9 +24,33 @@ function toYear(dateValue) {
   return Number.isFinite(year) ? year : undefined;
 }
 
+function posterUrl(pathValue) {
+  if (!pathValue) return undefined;
+  return `${TMDB_IMAGE_BASE}${pathValue}`;
+}
+
+async function fetchFallbackPosterUrl(mediaType, id, apiKey) {
+  const endpoint =
+    mediaType === "movie"
+      ? `${TMDB_BASE}/movie/${id}/images?api_key=${encodeURIComponent(apiKey)}`
+      : `${TMDB_BASE}/tv/${id}/images?api_key=${encodeURIComponent(apiKey)}`;
+
+  const images = await fetchJson(endpoint);
+  const filePath = images?.posters?.[0]?.file_path;
+  return posterUrl(filePath);
+}
+
 function topCast(items) {
   if (!Array.isArray(items)) return [];
   return items.slice(0, 4).map((item) => item.name).filter(Boolean);
+}
+
+function topGenres(genres) {
+  if (!Array.isArray(genres)) return [];
+  return genres
+    .map((item) => item?.name)
+    .filter(Boolean)
+    .slice(0, 2);
 }
 
 export async function searchTmdb(normalizedQuery, apiKey) {
@@ -46,6 +71,10 @@ export async function searchTmdb(normalizedQuery, apiKey) {
       title: item.title || item.name,
       year: toYear(item.release_date || item.first_air_date),
       authorOrDirector: undefined,
+      popularity: Number(item.popularity || 0),
+      voteCount: Number(item.vote_count || 0),
+      artworkUrl: posterUrl(item.poster_path),
+      artworkKind: "poster",
     }));
 }
 
@@ -70,6 +99,10 @@ export async function fetchTmdbDetails(candidate, apiKey) {
       : `${TMDB_BASE}/tv/${id}?api_key=${encodeURIComponent(apiKey)}&append_to_response=aggregate_credits`;
 
   const data = await fetchJson(endpoint);
+  let artwork = posterUrl(data.poster_path) || candidate.artworkUrl;
+  if (!artwork) {
+    artwork = await fetchFallbackPosterUrl(mediaType, id, apiKey).catch(() => undefined);
+  }
 
   const synopsisSource = data.overview || "";
   const year = toYear(data.release_date || data.first_air_date);
@@ -81,7 +114,10 @@ export async function fetchTmdbDetails(candidate, apiKey) {
       year,
       directorOrCreator: pickDirector(data.credits),
       cast: topCast(data.credits?.cast),
+      genres: topGenres(data.genres),
       synopsisSource,
+      artworkUrl: artwork,
+      artworkKind: "poster",
       sourceAttribution: "TMDB",
     };
   }
@@ -92,7 +128,10 @@ export async function fetchTmdbDetails(candidate, apiKey) {
     year,
     directorOrCreator: (data.created_by || [])[0]?.name,
     cast: topCast(data.aggregate_credits?.cast),
+    genres: topGenres(data.genres),
     synopsisSource,
+    artworkUrl: artwork,
+    artworkKind: "poster",
     sourceAttribution: "TMDB",
   };
 }

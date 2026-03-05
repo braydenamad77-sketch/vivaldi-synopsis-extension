@@ -1,6 +1,7 @@
 import { LLM_TIMEOUT_MS } from "../config/constants.js";
 
 function buildPrompt({ title, mediaType, year, author, directorOrCreator, cast, synopsis }) {
+  const isBook = mediaType === "book";
   const metadataLines = [
     `Title: ${title || "Unknown"}`,
     `Media Type: ${mediaType || "Unknown"}`,
@@ -11,13 +12,26 @@ function buildPrompt({ title, mediaType, year, author, directorOrCreator, cast, 
   ];
 
   return [
-    "Rewrite this into a concise NON-SPOILER synopsis.",
+    "Create a compelling NON-SPOILER synopsis and a best-guess genre label.",
+    "Output must be valid JSON only using this schema:",
+    '{"synopsis":"string","genres":["string","string"]}',
     "Rules:",
     "- Premise/setup only.",
     "- No ending, twists, reveals, deaths, or late-story events.",
-    "- 60 to 90 words.",
-    "- Neutral, informative tone.",
-    "- Return plain text only.",
+    isBook
+      ? "- Synopsis length: 95 to 140 words."
+      : "- Synopsis length: 60 to 95 words.",
+    isBook
+      ? "- Tone for books: vivid, hook-forward jacket-copy energy (still factual and non-spoiler)."
+      : "- Tone for movie/tv: clear, concise, informative, lightly hooky.",
+    isBook
+      ? "- For books, write 3 to 4 sentences: setup, character desire, pressure/stakes, and a final teaser sentence without revealing outcomes."
+      : "- For movie/tv, keep it tight and premise-led.",
+    "- Use concrete details from the source text when available.",
+    "- Avoid vague filler. Make the opening line a strong hook.",
+    "- Always provide 1 or 2 genre labels in `genres`.",
+    "- Prefer common, user-friendly labels when possible (for example: Drama, Romance, Thriller, Fantasy, Sci-Fi, Horror, Comedy, Mystery, Action, Adventure, Crime).",
+    "- You may combine related labels with a slash when it helps (example: Romance/Drama).",
     "",
     ...metadataLines,
     "",
@@ -25,10 +39,115 @@ function buildPrompt({ title, mediaType, year, author, directorOrCreator, cast, 
   ].join("\n");
 }
 
+function cleanJsonCandidate(text) {
+  if (!text) return "";
+  const trimmed = text.trim();
+  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
+
+function toTitleCase(value) {
+  return String(value)
+    .split(/\s+/)
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1).toLowerCase() : ""))
+    .join(" ")
+    .trim();
+}
+
+function normalizeGenre(value) {
+  const cleaned = String(value || "")
+    .replace(/^genres?\s*:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[,;|]+|[,;|]+$/g, "");
+
+  if (!cleaned) return "";
+
+  const slashNormalized = cleaned.replace(/\s*\/\s*/g, "/");
+  const titled = slashNormalized
+    .split("/")
+    .map((part) => toTitleCase(part))
+    .filter(Boolean)
+    .join("/");
+
+  if (!titled || titled.length > 36) return "";
+  return titled;
+}
+
+function normalizeGenres(input) {
+  const rawItems = Array.isArray(input)
+    ? input
+    : typeof input === "string"
+      ? input.split(/[,;\n]+/g)
+      : [];
+
+  const deduped = [];
+  const seen = new Set();
+
+  for (const item of rawItems) {
+    const normalized = normalizeGenre(item);
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(normalized);
+    if (deduped.length >= 2) break;
+  }
+
+  return deduped;
+}
+
+function tryParseJsonObject(rawText) {
+  const cleaned = cleanJsonCandidate(rawText);
+  if (!cleaned) return null;
+
+  try {
+    return JSON.parse(cleaned);
+  } catch (_error) {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) return null;
+    const snippet = cleaned.slice(start, end + 1);
+    try {
+      return JSON.parse(snippet);
+    } catch (_nestedError) {
+      return null;
+    }
+  }
+}
+
+export function parseOpenRouterOutput(rawText) {
+  const parsed = tryParseJsonObject(rawText);
+  if (parsed && typeof parsed === "object") {
+    const synopsis = String(parsed.synopsis || parsed.summary || "").trim();
+    const predictedGenres = normalizeGenres(parsed.genres || parsed.genre || parsed.predictedGenres);
+    if (synopsis) {
+      return { synopsis, predictedGenres };
+    }
+  }
+
+  const plain = cleanJsonCandidate(rawText);
+  const lines = plain
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const genreLine = lines.find((line) => /^genres?\s*:/i.test(line));
+  const predictedGenres = normalizeGenres(genreLine ? genreLine.replace(/^genres?\s*:/i, "") : "");
+
+  const synopsis = lines
+    .filter((line) => !/^genres?\s*:/i.test(line))
+    .join(" ")
+    .replace(/^synopsis\s*:/i, "")
+    .trim();
+
+  return { synopsis, predictedGenres };
+}
+
 export async function rewriteSynopsisWithOpenRouter(input, settings) {
   if (!settings.openrouterApiKey) {
     throw new Error("OpenRouter API key missing");
   }
+  const isBook = input?.mediaType === "book";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
@@ -43,13 +162,13 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
       },
       body: JSON.stringify({
         model: settings.openrouterModel,
-        temperature: 0.2,
-        max_tokens: 140,
+        temperature: isBook ? 0.3 : 0.2,
+        max_tokens: isBook ? 280 : 220,
         messages: [
           {
             role: "system",
             content:
-              "You are a careful media assistant that writes short, premise-only, non-spoiler synopses.",
+              "You are a careful media assistant. Respond with valid JSON only, with non-spoiler synopsis text plus broad audience-friendly genre labels. For books, favor compelling jacket-copy style hooks without spoilers.",
           },
           {
             role: "user",
@@ -69,7 +188,7 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
       throw new Error("OpenRouter returned empty response");
     }
 
-    return content;
+    return parseOpenRouterOutput(content);
   } finally {
     clearTimeout(timeout);
   }

@@ -8,6 +8,7 @@
     "https://openlibrary.org/*",
     "https://api.themoviedb.org/*",
     "https://en.wikipedia.org/*",
+    "https://www.goodreads.com/*",
     "https://openrouter.ai/*"
   ],
   "background": {

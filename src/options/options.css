@@ -106,6 +106,37 @@ input[type="password"]:focus {
   accent-color: var(--accent);
 }
 
+.mode-group {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(174, 160, 138, 0.22);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.mode-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.25px;
+  color: var(--muted);
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.mode-option:last-child {
+  margin-bottom: 0;
+}
+
+.mode-option input {
+  accent-color: var(--accent);
+}
+
 .actions {
   margin-top: 18px;
   display: flex;

@@ -5,6 +5,8 @@ const els = {
   openrouterApiKey: document.getElementById("openrouterApiKey"),
   openrouterModel: document.getElementById("openrouterModel"),
   tmdbApiKey: document.getElementById("tmdbApiKey"),
+  resultUiModePanel: document.getElementById("resultUiModePanel"),
+  resultUiModeCompact: document.getElementById("resultUiModeCompact"),
   llmEnabled: document.getElementById("llmEnabled"),
   llmPreferred: document.getElementById("llmPreferred"),
   localOnlyMode: document.getElementById("localOnlyMode"),
@@ -17,7 +19,7 @@ const els = {
 };
 
 function mergeSettings(stored) {
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...(stored || {}),
     providerToggles: {
@@ -25,6 +27,12 @@ function mergeSettings(stored) {
       ...(stored?.providerToggles || {}),
     },
   };
+
+  // Backward compatibility for older saved values.
+  if (merged.resultUiMode === "panel") merged.resultUiMode = "with_image";
+  if (merged.resultUiMode === "compact") merged.resultUiMode = "without_image";
+
+  return merged;
 }
 
 function setStatus(message) {
@@ -43,6 +51,8 @@ async function loadSettings() {
   els.openrouterApiKey.value = settings.openrouterApiKey;
   els.openrouterModel.value = settings.openrouterModel;
   els.tmdbApiKey.value = settings.tmdbApiKey;
+  els.resultUiModePanel.checked = settings.resultUiMode === "with_image";
+  els.resultUiModeCompact.checked = settings.resultUiMode === "without_image";
   els.llmEnabled.checked = settings.llmEnabled;
   els.llmPreferred.checked = settings.llmPreferred;
   els.localOnlyMode.checked = settings.localOnlyMode;
@@ -56,6 +66,7 @@ function collectSettings() {
     openrouterApiKey: els.openrouterApiKey.value.trim(),
     openrouterModel: els.openrouterModel.value.trim() || DEFAULT_SETTINGS.openrouterModel,
     tmdbApiKey: els.tmdbApiKey.value.trim(),
+    resultUiMode: els.resultUiModeCompact.checked ? "without_image" : "with_image",
     llmEnabled: els.llmEnabled.checked,
     llmPreferred: els.llmPreferred.checked,
     localOnlyMode: els.localOnlyMode.checked,

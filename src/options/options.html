@@ -29,6 +29,11 @@
 
       <section class="group">
         <h2>Behavior</h2>
+        <div class="mode-group" role="radiogroup" aria-label="Result display mode">
+          <p class="mode-title">Result Display Mode</p>
+          <label class="mode-option"><input id="resultUiModePanel" type="radio" name="resultUiMode" value="with_image" /> With Image Panel</label>
+          <label class="mode-option"><input id="resultUiModeCompact" type="radio" name="resultUiMode" value="without_image" /> Without Image</label>
+        </div>
         <label class="check"><input id="llmEnabled" type="checkbox" /> Enable LLM rewriting</label>
         <label class="check"><input id="llmPreferred" type="checkbox" /> Prefer LLM by default</label>
         <label class="check"><input id="localOnlyMode" type="checkbox" /> Local-only mode (cache only)</label>
@@ -38,7 +43,7 @@
         <h2>Providers</h2>
         <label class="check"><input id="providerOpenLibrary" type="checkbox" /> Open Library (books)</label>
         <label class="check"><input id="providerTmdb" type="checkbox" /> TMDB (movies/TV)</label>
-        <label class="check"><input id="providerWikipedia" type="checkbox" /> Wikipedia fallback</label>
+        <label class="check"><input id="providerWikipedia" type="checkbox" /> Wikipedia fallback (movies/TV only)</label>
       </section>
 
       <div class="actions">

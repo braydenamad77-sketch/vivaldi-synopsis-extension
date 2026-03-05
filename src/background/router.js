@@ -1,17 +1,18 @@
 import { DEFAULT_SETTINGS } from "../config/constants.js";
 import { buildCacheKey, normalizeQuery } from "../core/normalize.js";
-import { chooseCandidate, rankCandidates } from "../core/disambiguate.js";
+import { chooseCandidate, collapseBookCandidates, rankCandidates } from "../core/disambiguate.js";
 import { getCache, setCache } from "../core/cache.js";
 import { sanitizeSynopsis, safeTemplate } from "../core/spoiler-guard.js";
 import { searchOpenLibrary, fetchOpenLibraryDetails } from "../providers/openlibrary.js";
 import { searchTmdb, fetchTmdbDetails } from "../providers/tmdb.js";
 import { fetchWikipediaSummary } from "../providers/wikipedia.js";
+import { fetchGoodreadsFallback } from "../providers/goodreads.js";
 import { rewriteSynopsisWithOpenRouter } from "../llm/openrouter.js";
 
 const pendingAmbiguities = new Map();
 
 function mergeSettings(stored) {
-  return {
+  const merged = {
     ...DEFAULT_SETTINGS,
     ...(stored || {}),
     providerToggles: {
@@ -19,6 +20,12 @@ function mergeSettings(stored) {
       ...(stored?.providerToggles || {}),
     },
   };
+
+  // Backward compatibility for older saved values.
+  if (merged.resultUiMode === "panel") merged.resultUiMode = "with_image";
+  if (merged.resultUiMode === "compact") merged.resultUiMode = "without_image";
+
+  return merged;
 }
 
 export async function getSettings() {
@@ -30,21 +37,89 @@ function buildAttribution(source, llmUsed) {
   return llmUsed ? `${source} + OpenRouter` : source;
 }
 
+function shouldBypassCachedResult(cached, settings) {
+  if (!cached) return false;
+  if (settings.resultUiMode !== "with_image") return false;
+  if (!cached.mediaType) return false;
+
+  const mediaSupportsArtwork = cached.mediaType === "movie" || cached.mediaType === "tv" || cached.mediaType === "book";
+  if (!mediaSupportsArtwork) return false;
+
+  return !cached.artworkUrl;
+}
+
+function mediaTypeLabel(mediaType) {
+  if (mediaType === "movie") return "MOVIE";
+  if (mediaType === "tv") return "TV";
+  if (mediaType === "book") return "BOOK";
+  return "MEDIA";
+}
+
+function buildGenreLabel(details) {
+  const genres = Array.isArray(details.genres) ? details.genres.filter(Boolean) : [];
+  if (!genres.length) return undefined;
+  return genres.slice(0, 2).join(" / ");
+}
+
+function buildGenreSource(details, genreLabel) {
+  if (!genreLabel) return "unknown";
+  if (details.genreSource === "ai") return "ai";
+  if (details.genreSource === "provider") return "provider";
+  return "unknown";
+}
+
+function buildTags(details) {
+  const secondaryTag = details.year ? String(details.year) : undefined;
+  const directorOrCreatorTag = details.directorOrCreator
+    ? `DIRECTOR/CREATOR: ${String(details.directorOrCreator).toUpperCase()}`
+    : undefined;
+  const authorTag = details.author ? `AUTHOR: ${String(details.author).toUpperCase()}` : undefined;
+  const castTag =
+    Array.isArray(details.cast) && details.cast.length
+      ? `CAST: ${details.cast.slice(0, 4).join(", ").toUpperCase()}`
+      : undefined;
+
+  return {
+    primaryTag: mediaTypeLabel(details.mediaType),
+    secondaryTag,
+    directorOrCreatorTag,
+    authorTag,
+    castTag,
+  };
+}
+
 async function lookupCandidates(normalized, settings) {
-  const tasks = [];
+  const jobs = [];
+  const providerHealth = {
+    openlibrary: settings.providerToggles.openlibrary ? "enabled" : "disabled",
+    tmdb: settings.providerToggles.tmdb ? (settings.tmdbApiKey ? "enabled" : "missing_key") : "disabled",
+  };
 
   if (settings.providerToggles.openlibrary) {
-    tasks.push(searchOpenLibrary(normalized));
+    jobs.push({ provider: "openlibrary", promise: searchOpenLibrary(normalized) });
   }
 
   if (settings.providerToggles.tmdb && settings.tmdbApiKey) {
-    tasks.push(searchTmdb(normalized, settings.tmdbApiKey));
+    jobs.push({ provider: "tmdb", promise: searchTmdb(normalized, settings.tmdbApiKey) });
   }
 
-  const settled = await Promise.allSettled(tasks);
-  return settled
-    .flatMap((item) => (item.status === "fulfilled" ? item.value : []))
-    .filter(Boolean);
+  const settled = await Promise.allSettled(jobs.map((job) => job.promise));
+  const combined = [];
+
+  settled.forEach((result, index) => {
+    const provider = jobs[index].provider;
+    if (result.status === "fulfilled") {
+      providerHealth[provider] = "ok";
+      combined.push(...(result.value || []));
+      return;
+    }
+    providerHealth[provider] = "error";
+  });
+
+  return {
+    candidates: collapseBookCandidates(combined.filter(Boolean)),
+    providerHealth,
+  };
 }
 
 async function hydrateCandidate(candidate, settings, normalized) {
@@ -62,10 +137,33 @@ async function hydrateCandidate(candidate, settings, normalized) {
       sourceAttribution: "Unknown",
       synopsisSource: "",
       cast: [],
+      artworkUrl: candidate.artworkUrl,
+      artworkKind: candidate.artworkKind || "placeholder",
     };
   }
 
-  if (!details.synopsisSource && settings.providerToggles.wikipedia) {
+  if (details.mediaType === "book" && !details.synopsisSource) {
+    const fallback = await fetchGoodreadsFallback({
+      title: details.title || candidate.title || normalized.query,
+      author: details.author || candidate.authorOrDirector,
+      year: details.year || candidate.year,
+      goodreadsIds: details.goodreadsIds || candidate.goodreadsIds,
+      isbn10: details.isbn10 || candidate.isbn10,
+      isbn13: details.isbn13 || candidate.isbn13,
+    });
+
+    if (fallback?.synopsisSource) {
+      details.synopsisSource = fallback.synopsisSource;
+      details.sourceAttribution = `${details.sourceAttribution} + ${fallback.sourceAttribution}`;
+      if (!details.author && fallback.author) details.author = fallback.author;
+      if (!details.year && fallback.year) details.year = fallback.year;
+      if ((!Array.isArray(details.genres) || !details.genres.length) && Array.isArray(fallback.genres)) {
+        details.genres = fallback.genres;
+      }
+    }
+  }
+
+  if (!details.synopsisSource && details.mediaType !== "book" && settings.providerToggles.wikipedia) {
     const wiki = await fetchWikipediaSummary(details.title || normalized.query);
     if (wiki?.synopsisSource) {
       details.synopsisSource = wiki.synopsisSource;
@@ -80,6 +178,8 @@ async function applySynopsisPipeline(details, settings) {
   const baseText = sanitizeSynopsis(details.synopsisSource || "", details);
   let synopsis = baseText || safeTemplate(details);
   let llmUsed = false;
+  let fallbackGenres = [];
+  const providerGenres = Array.isArray(details.genres) ? details.genres.filter(Boolean) : [];
 
   if (settings.llmEnabled && settings.openrouterApiKey && (settings.llmPreferred || !details.synopsisSource)) {
     try {
@@ -95,7 +195,10 @@ async function applySynopsisPipeline(details, settings) {
         },
         settings,
       );
-      synopsis = sanitizeSynopsis(rewritten, details);
+      if (rewritten?.synopsis) {
+        synopsis = sanitizeSynopsis(rewritten.synopsis, details);
+      }
+      fallbackGenres = Array.isArray(rewritten?.predictedGenres) ? rewritten.predictedGenres.filter(Boolean).slice(0, 2) : [];
       llmUsed = true;
     } catch (_error) {
       synopsis = sanitizeSynopsis(synopsis, details);
@@ -105,11 +208,17 @@ async function applySynopsisPipeline(details, settings) {
   return {
     ...details,
     synopsis,
+    genres: providerGenres.length ? providerGenres : fallbackGenres,
+    genreSource: providerGenres.length ? "provider" : fallbackGenres.length ? "ai" : "unknown",
     sourceAttribution: buildAttribution(details.sourceAttribution, llmUsed),
+    artworkKind: details.artworkUrl ? details.artworkKind || "poster" : "placeholder",
   };
 }
 
-function toResult(details, fromCache = false) {
+function toResult(details, settings, fromCache = false) {
+  const tags = buildTags(details);
+  const genreLabel = buildGenreLabel(details);
+  const genreSource = buildGenreSource(details, genreLabel);
   return {
     title: details.title,
     mediaType: details.mediaType,
@@ -119,11 +228,41 @@ function toResult(details, fromCache = false) {
     cast: details.cast || [],
     synopsis: details.synopsis,
     sourceAttribution: details.sourceAttribution,
+    artworkUrl: details.artworkUrl,
+    artworkKind: details.artworkKind || "placeholder",
+    genreLabel,
+    genreSource,
+    resultUiMode: settings.resultUiMode,
+    ...tags,
     fromCache,
   };
 }
 
 async function lookupFallback(normalized, settings) {
+  if (normalized.hintType === "book") {
+    const fallback = await fetchGoodreadsFallback({
+      title: normalized.query || normalized.raw,
+      year: normalized.hintYear,
+    });
+    if (!fallback?.synopsisSource) return undefined;
+
+    const details = {
+      title: fallback.title || normalized.query,
+      mediaType: "book",
+      year: fallback.year || normalized.hintYear,
+      synopsisSource: fallback.synopsisSource,
+      sourceAttribution: fallback.sourceAttribution,
+      author: fallback.author,
+      directorOrCreator: undefined,
+      cast: [],
+      genres: fallback.genres || [],
+      artworkUrl: undefined,
+      artworkKind: "placeholder",
+    };
+
+    return applySynopsisPipeline(details, settings);
+  }
+
   if (!settings.providerToggles.wikipedia) return undefined;
 
   const wiki = await fetchWikipediaSummary(normalized.query || normalized.raw);
@@ -138,6 +277,8 @@ async function lookupFallback(normalized, settings) {
     author: undefined,
     directorOrCreator: undefined,
     cast: [],
+    artworkUrl: undefined,
+    artworkKind: "placeholder",
   };
 
   return applySynopsisPipeline(details, settings);
@@ -157,11 +298,13 @@ export async function lookupSynopsis(request) {
   const cacheKey = buildCacheKey(normalized);
 
   const cached = await getCache(cacheKey);
-  if (cached) {
+  if (cached && !shouldBypassCachedResult(cached, settings)) {
     return {
       status: "ok",
       result: {
         ...cached,
+        genreSource: cached.genreSource || "unknown",
+        resultUiMode: cached.resultUiMode || settings.resultUiMode,
         fromCache: true,
       },
     };
@@ -175,7 +318,7 @@ export async function lookupSynopsis(request) {
     };
   }
 
-  const candidates = await lookupCandidates(normalized, settings);
+  const { candidates, providerHealth } = await lookupCandidates(normalized, settings);
 
   if (!candidates.length) {
     const fallback = await lookupFallback(normalized, settings);
@@ -186,7 +329,7 @@ export async function lookupSynopsis(request) {
       };
     }
 
-    const fallbackResult = toResult(fallback, false);
+    const fallbackResult = toResult(fallback, settings, false);
     await setCache(cacheKey, fallbackResult);
     return { status: "ok", result: fallbackResult };
   }
@@ -207,6 +350,10 @@ export async function lookupSynopsis(request) {
       status: "ambiguous",
       requestId,
       candidates: decision.candidates,
+      note:
+        providerHealth.tmdb === "error"
+          ? "Movie/TV provider was unavailable during this lookup, so results may skew toward books."
+          : undefined,
     };
   }
 
@@ -219,7 +366,7 @@ export async function lookupSynopsis(request) {
 
   const details = await hydrateCandidate(decision.candidate, settings, normalized);
   const final = await applySynopsisPipeline(details, settings);
-  const result = toResult(final, false);
+  const result = toResult(final, settings, false);
 
   await setCache(cacheKey, result);
 
@@ -250,7 +397,7 @@ export async function resolveAmbiguity(request) {
 
   const details = await hydrateCandidate(selected, pending.settings, pending.normalized);
   const final = await applySynopsisPipeline(details, pending.settings);
-  const result = toResult(final, false);
+  const result = toResult(final, pending.settings, false);
 
   await setCache(pending.cacheKey, result);
   pendingAmbiguities.delete(request.requestId);
