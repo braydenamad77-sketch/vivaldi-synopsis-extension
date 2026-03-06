@@ -1,5 +1,10 @@
 import { normalizeTitleForCompare } from "./normalize.js";
 
+const BOOK_RECENCY_FLOOR_YEAR = 1900;
+const BOOK_RECENCY_CEILING_YEAR = 2025;
+const BOOK_RECENCY_MAX_BOOST = 0.05;
+export const AMBIGUITY_CANDIDATE_MAX = 6;
+
 function diceCoefficient(a, b) {
   if (!a || !b) return 0;
   if (a === b) return 1;
@@ -53,6 +58,17 @@ function tmdbPopularityBonus(candidate) {
   const popPart = Math.min(0.07, Math.log1p(Math.max(0, popularity)) / 25);
   const votePart = Math.min(0.05, Math.log1p(Math.max(0, votes)) / 80);
   return popPart + votePart;
+}
+
+function bookRecencyBoost(candidate) {
+  if (candidate?.mediaType !== "book") return 0;
+
+  const year = Number(candidate?.year);
+  if (!Number.isFinite(year)) return 0;
+
+  const clampedYear = Math.min(BOOK_RECENCY_CEILING_YEAR, Math.max(BOOK_RECENCY_FLOOR_YEAR, year));
+  const normalized = (clampedYear - BOOK_RECENCY_FLOOR_YEAR) / (BOOK_RECENCY_CEILING_YEAR - BOOK_RECENCY_FLOOR_YEAR);
+  return normalized * BOOK_RECENCY_MAX_BOOST;
 }
 
 function preferAudiovisual(candidate) {
@@ -121,7 +137,7 @@ function compareRankedCandidates(a, b) {
   return 0;
 }
 
-function selectAmbiguousCandidates(ranked, max = 5) {
+export function selectAmbiguousCandidates(ranked, max = AMBIGUITY_CANDIDATE_MAX) {
   const audiovisual = ranked.filter((candidate) => preferAudiovisual(candidate));
   const books = ranked.filter((candidate) => candidate.mediaType === "book");
 
@@ -131,7 +147,7 @@ function selectAmbiguousCandidates(ranked, max = 5) {
 
   const selected = [];
   const takeAv = Math.min(3, audiovisual.length);
-  const takeBooks = Math.min(2, books.length);
+  const takeBooks = Math.min(3, books.length);
 
   selected.push(...audiovisual.slice(0, takeAv));
   selected.push(...books.slice(0, takeBooks));
@@ -166,7 +182,8 @@ export function rankCandidates(candidates, normalizedQuery) {
         yearScore(candidate.year, normalizedQuery.hintYear) +
         mediaTypeScore(candidate.mediaType, normalizedQuery.hintType) +
         providerPrior(candidate) +
-        tmdbPopularityBonus(candidate);
+        tmdbPopularityBonus(candidate) +
+        bookRecencyBoost(candidate);
 
       return {
         ...candidate,
@@ -194,6 +211,6 @@ export function chooseCandidate(ranked) {
 
   return {
     status: "ambiguous",
-    candidates: selectAmbiguousCandidates(ranked, 5),
+    candidates: selectAmbiguousCandidates(ranked, AMBIGUITY_CANDIDATE_MAX),
   };
 }

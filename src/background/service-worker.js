@@ -4,9 +4,9 @@ import {
   MENU_LOOKUP_MANUAL,
   MENU_LOOKUP_SELECTION,
 } from "../config/constants.js";
-import { lookupSynopsis, resolveAmbiguity } from "./router.js";
+import { lookupSynopsis, requestAlternatives, resolveAmbiguity } from "./router.js";
 
-const DEBUG_LOGS = true;
+const DEBUG_LOGS = false;
 
 function swLog(...args) {
   if (!DEBUG_LOGS) return;
@@ -143,18 +143,18 @@ async function ensureUiAssets(tabId) {
 }
 
 async function showManualSearchInput(tabId) {
-  if (!tabId) return;
+  if (!tabId) return false;
   swLog("showManualSearchInput:start", { tabId });
 
   const ready = await ensureUiAssets(tabId);
   if (!ready) {
     swLog("showManualSearchInput:uiNotReady", { tabId });
-    return;
+    return false;
   }
 
   let delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
   swLog("showManualSearchInput:firstAck", { tabId, delivered });
-  if (delivered) return;
+  if (delivered) return true;
 
   // Retry once in case a page blocks/defers message handlers momentarily.
   delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
@@ -163,6 +163,8 @@ async function showManualSearchInput(tabId) {
     swLog("showManualSearchInput:fallbackSendWithoutAck", { tabId });
     safeSendMessage(tabId, { type: "SHOW_SEARCH_INPUT" });
   }
+
+  return true;
 }
 
 async function processLookup(selectionText, tabId) {
@@ -273,6 +275,55 @@ if (chrome?.runtime?.onMessage?.addListener) {
             message: error?.message || "Lookup failed.",
           }),
         );
+
+      return true;
+    }
+
+    if (message?.type === "REQUEST_ALTERNATIVES") {
+      requestAlternatives(message)
+        .then((response) => sendResponse(response))
+        .catch((error) =>
+          sendResponse({
+            status: "error",
+            errorCode: "ALTERNATIVES_LOOKUP_FAILED",
+            message: error?.message || "Could not load alternative matches.",
+          }),
+        );
+      return true;
+    }
+
+    if (message?.type === "OPEN_SEARCH_IN_ACTIVE_TAB") {
+      chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+        const tabId = tabs?.[0]?.id;
+        if (!tabId) {
+          sendResponse({
+            status: "error",
+            errorCode: "NO_ACTIVE_TAB",
+            message: "Could not find the active tab.",
+          });
+          return;
+        }
+
+        try {
+          const opened = await showManualSearchInput(tabId);
+          if (!opened) {
+            sendResponse({
+              status: "error",
+              errorCode: "SEARCH_INPUT_UNAVAILABLE",
+              message: "Manual search could not open on this page.",
+            });
+            return;
+          }
+
+          sendResponse({ status: "ok" });
+        } catch (error) {
+          sendResponse({
+            status: "error",
+            errorCode: "SEARCH_INPUT_FAILED",
+            message: error?.message || "Could not open manual search on this page.",
+          });
+        }
+      });
 
       return true;
     }

@@ -17,6 +17,7 @@ export const DEFAULT_SETTINGS = {
   llmEnabled: true,
   llmPreferred: true,
   localOnlyMode: false,
+  searchShortcutKey: "\\",
   resultUiMode: "with_image",
   tmdbApiKey: "",
   providerToggles: {

@@ -24,6 +24,7 @@
   "options_page": "src/options/options.html",
   "action": {
     "default_title": "Vivaldi Synopsis",
+    "default_popup": "src/popup/popup.html",
     "default_icon": {
       "16": "assets/icons/icon-16.png",
       "32": "assets/icons/icon-32.png",

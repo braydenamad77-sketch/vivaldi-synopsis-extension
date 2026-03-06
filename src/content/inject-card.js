@@ -1,5 +1,5 @@
 (() => {
-  const DEBUG_LOGS = true;
+  const DEBUG_LOGS = false;
   const cLog = (...args) => {
     if (!DEBUG_LOGS) return;
     console.log("[VS][CONTENT]", ...args);
@@ -27,10 +27,19 @@
   const ENABLE_HYBRID_PANEL_BALANCE = true;
   const PANEL_HEIGHT_MIN = 390;
   const PANEL_HEIGHT_MAX = 520;
+  const FOCUSABLE_SELECTOR = ".vs-search-input, .vs-candidate, .vs-chip--action, .vs-genre-origin, .vs-close, .vs-button";
+  let searchShortcutKey = "\\";
   let lastContextMenuPos = null;
+  let restoreFocusTarget = null;
 
   function clamp(value, min, max) {
     return Math.min(max, Math.max(min, value));
+  }
+
+  function isEditableTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+    return Boolean(target.closest("[contenteditable]:not([contenteditable='false'])"));
   }
 
   function createRoot() {
@@ -75,13 +84,53 @@
     };
   }
 
-  function closeCard() {
+  function mergeCardCleanup(card, fn) {
+    const previous = typeof card.__vsCleanup === "function" ? card.__vsCleanup : null;
+    card.__vsCleanup = () => {
+      if (previous) previous();
+      fn();
+    };
+  }
+
+  function rememberFocusTarget(existingCard) {
+    if (existingCard) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && !active.closest(`#${CARD_ID}`)) {
+      restoreFocusTarget = active;
+    }
+  }
+
+  function restorePreviousFocus() {
+    if (!(restoreFocusTarget instanceof HTMLElement)) return;
+    if (!restoreFocusTarget.isConnected) return;
+    restoreFocusTarget.focus({ preventScroll: true });
+  }
+
+  function focusCard(card) {
+    const target = card.querySelector(FOCUSABLE_SELECTOR);
+    if (target instanceof HTMLElement) {
+      target.focus({ preventScroll: true });
+      return;
+    }
+
+    if (card instanceof HTMLElement) {
+      card.focus({ preventScroll: true });
+    }
+  }
+
+  function closeCard(options = {}) {
+    const { restoreFocus = true } = options;
     const existing = document.getElementById(CARD_ID);
     if (existing) {
       if (typeof existing.__vsCleanup === "function") {
         existing.__vsCleanup();
       }
       existing.remove();
+    }
+
+    if (restoreFocus) {
+      restorePreviousFocus();
+      restoreFocusTarget = null;
     }
   }
 
@@ -145,15 +194,26 @@
     const root = createRoot();
     const existing = document.getElementById(CARD_ID);
     const existingAnchor = readCardAnchor(existing);
-    closeCard();
+    rememberFocusTarget(existing);
+    closeCard({ restoreFocus: false });
 
     card.style.visibility = "hidden";
     card.style.top = `${window.scrollY}px`;
     card.style.left = `${window.scrollX}px`;
 
+    const handleEscape = (event) => {
+      if (event.key !== "Escape") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      closeCard();
+    };
+    document.addEventListener("keydown", handleEscape, true);
+    mergeCardCleanup(card, () => document.removeEventListener("keydown", handleEscape, true));
+
     root.appendChild(card);
     applyHybridPanelHeight(card);
     positionCard(card, options.anchorPos || existingAnchor || undefined);
+    setTimeout(() => focusCard(card), 0);
   }
 
   const handleContextMenu = (event) => {
@@ -166,10 +226,50 @@
   document.addEventListener("contextmenu", handleContextMenu, true);
   registerCleanup(() => document.removeEventListener("contextmenu", handleContextMenu, true));
 
+  async function hydrateShortcutKey() {
+    const payload = await chrome.storage.local.get("settings");
+    const shortcutKey = String(payload?.settings?.searchShortcutKey || "\\").trim();
+    searchShortcutKey = shortcutKey || "\\";
+  }
+
+  hydrateShortcutKey().catch(() => {
+    searchShortcutKey = "\\";
+  });
+
+  if (chrome?.storage?.onChanged?.addListener) {
+    const handleStorageChange = (changes, areaName) => {
+      if (areaName !== "local" || !changes.settings?.newValue) return;
+      const shortcutKey = String(changes.settings.newValue.searchShortcutKey || "\\").trim();
+      searchShortcutKey = shortcutKey || "\\";
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    registerCleanup(() => chrome.storage.onChanged.removeListener(handleStorageChange));
+  }
+
+  const handleSlashShortcut = (event) => {
+    if (event.defaultPrevented) return;
+    if (isEditableTarget(event.target)) return;
+
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+    const isBackslash = searchShortcutKey === "\\" && (event.key === "\\" || (event.code === "Backslash" && !event.shiftKey));
+    const isConfiguredKey = searchShortcutKey !== "\\" && event.key === searchShortcutKey;
+    if (!isBackslash && !isConfiguredKey) return;
+
+    event.preventDefault();
+    cLog("shortcut:manualSearch:open", { shortcutKey: searchShortcutKey });
+    showSearchInput();
+  };
+  document.addEventListener("keydown", handleSlashShortcut, true);
+  registerCleanup(() => document.removeEventListener("keydown", handleSlashShortcut, true));
+
   function buildCompactShell(title = "Synopsis") {
     const card = document.createElement("section");
     card.id = CARD_ID;
     card.className = "vs-card vs-card--compact";
+    card.tabIndex = -1;
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", title);
 
     const header = document.createElement("header");
     header.className = "vs-header";
@@ -195,6 +295,9 @@
     const card = document.createElement("section");
     card.id = CARD_ID;
     card.className = "vs-card vs-card--panel";
+    card.tabIndex = -1;
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", "Synopsis result");
     return card;
   }
 
@@ -311,6 +414,9 @@
     const card = document.createElement("section");
     card.id = CARD_ID;
     card.className = "vs-card vs-card--search";
+    card.tabIndex = -1;
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", "Manual synopsis search");
     const openedAt = Date.now();
 
     const form = document.createElement("form");
@@ -337,7 +443,7 @@
     const cleanup = () => {
       document.removeEventListener("mousedown", closeIfOutside, true);
     };
-    card.__vsCleanup = cleanup;
+    mergeCardCleanup(card, cleanup);
 
     setTimeout(() => {
       document.addEventListener("mousedown", closeIfOutside, true);
@@ -361,15 +467,7 @@
       cLog("showSearchInput:submit:response", response);
 
       if (response?.status === "error") {
-        showError(response.message || "Lookup failed.");
-      }
-    });
-
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cLog("showSearchInput:close:escape");
-        closeCard();
+        showError(response.message || "Lookup failed.", { errorCode: response.errorCode });
       }
     });
 
@@ -378,8 +476,6 @@
       top: window.scrollY + 64,
     };
     mountCard(card, { anchorPos: lastContextMenuPos || fallbackPos });
-
-    setTimeout(() => input.focus(), 0);
   }
 
   function createAutoResolvedNote() {
@@ -400,10 +496,10 @@
     const wrap = document.createElement("span");
     wrap.className = "vs-genre-origin-wrap";
 
-    const badge = document.createElement("span");
+    const badge = document.createElement("button");
     badge.className = "vs-genre-origin";
-    badge.setAttribute("role", "img");
-    badge.setAttribute("aria-label", "Info");
+    badge.type = "button";
+    badge.setAttribute("aria-label", genreSourceTooltip(genreSource));
     badge.textContent = "i";
 
     const tooltip = document.createElement("span");
@@ -412,6 +508,48 @@
 
     wrap.append(badge, tooltip);
     return wrap;
+  }
+
+  function buildErrorActions(errorCode) {
+    const actions = [
+      {
+        label: "Search manually",
+        run: () => showSearchInput(),
+      },
+    ];
+
+    if (errorCode === "LOCAL_ONLY_MISS" || errorCode === "TMDB_KEY_MISSING") {
+      actions.push({
+        label: "Open Settings",
+        run: () => chrome.runtime.openOptionsPage(),
+        secondary: true,
+      });
+    }
+
+    return actions;
+  }
+
+  async function showAlternativeMatches(result) {
+    const query = String(result.lookupQuery || result.title || "").trim();
+    showLoading(query || "Finding alternatives");
+
+    const response = await chrome.runtime.sendMessage({
+      type: "REQUEST_ALTERNATIVES",
+      requestId: result.reselectRequestId,
+      query,
+    });
+
+    if (response?.status === "ambiguous") {
+      showAmbiguous({
+        requestId: response.requestId,
+        candidates: response.candidates || [],
+        originalQuery: query || result.title || "your selection",
+        note: response.note,
+      });
+      return;
+    }
+
+    showError(response?.message || "Could not load alternative matches.", { errorCode: response?.errorCode });
   }
 
   function showPanelResult(result, options = {}) {
@@ -465,6 +603,24 @@
       chip.textContent = text;
       chips.appendChild(chip);
     });
+
+    const canShowWrongMatchChip =
+      options.autoResolved &&
+      (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
+
+    if (canShowWrongMatchChip) {
+      const wrongMatch = document.createElement("button");
+      wrongMatch.type = "button";
+      wrongMatch.className = "vs-chip vs-chip--action";
+      wrongMatch.textContent = "Wrong match?";
+      wrongMatch.addEventListener("click", () => {
+        showAlternativeMatches(result).catch((error) => {
+          cLog("wrongMatch:error", { message: error?.message || String(error) });
+          showError("Could not load alternative matches.");
+        });
+      });
+      chips.appendChild(wrongMatch);
+    }
 
     const autoNote = options.autoResolved ? createAutoResolvedNote() : null;
 
@@ -534,7 +690,7 @@
         if (response?.status === "ok") {
           showResult(response.result, { autoResolved: false });
         } else {
-          showError(response?.message || "Could not resolve your selection.");
+          showError(response?.message || "Could not resolve your selection.", { errorCode: response?.errorCode });
         }
       });
       container.appendChild(button);
@@ -590,14 +746,31 @@
     mountCard(card);
   }
 
-  function showError(message) {
+  function showError(message, options = {}) {
     const card = buildCompactShell("Synopsis Unavailable");
+    const actions = buildErrorActions(options.errorCode);
 
     const body = document.createElement("p");
     body.className = "vs-error";
     body.textContent = message || "Something went wrong. Try again.";
 
     card.appendChild(body);
+    if (actions.length) {
+      const row = document.createElement("div");
+      row.className = "vs-actions";
+
+      actions.forEach((action) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = `vs-button${action.secondary ? " vs-button--ghost" : ""}`;
+        button.textContent = action.label;
+        button.addEventListener("click", action.run);
+        row.appendChild(button);
+      });
+
+      card.appendChild(row);
+    }
+
     mountCard(card);
   }
 
@@ -636,7 +809,7 @@
     }
 
     if (message.type === "SHOW_ERROR") {
-      showError(message.message);
+      showError(message.message, { errorCode: message.errorCode });
     }
 
     return false;
@@ -652,7 +825,7 @@
   }
 
   registerCleanup(() => {
-    closeCard();
+    closeCard({ restoreFocus: false });
     const root = document.getElementById(ROOT_ID);
     if (root) root.remove();
   });

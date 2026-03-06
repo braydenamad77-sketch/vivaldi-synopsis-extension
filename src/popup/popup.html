@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="popup">
+      <p class="eyebrow">Vivaldi Synopsis</p>
+      <h1>Quick Lookup</h1>
+      <p class="sub">Highlight a title and right-click, or open manual search from the current page.</p>
+
+      <div class="card">
+        <p class="label">Manual search shortcut</p>
+        <p id="shortcutValue" class="value">Backslash (\)</p>
+      </div>
+
+      <div id="popupStatus" class="status" role="status" aria-live="polite"></div>
+
+      <div class="actions">
+        <button id="searchBtn" type="button">Open Search On This Page</button>
+        <button id="optionsBtn" type="button" class="ghost">Open Settings</button>
+      </div>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

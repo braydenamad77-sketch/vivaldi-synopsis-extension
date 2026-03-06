@@ -1,6 +1,12 @@
 import { DEFAULT_SETTINGS } from "../config/constants.js";
 import { buildCacheKey, normalizeQuery } from "../core/normalize.js";
-import { chooseCandidate, collapseBookCandidates, rankCandidates } from "../core/disambiguate.js";
+import {
+  AMBIGUITY_CANDIDATE_MAX,
+  chooseCandidate,
+  collapseBookCandidates,
+  rankCandidates,
+  selectAmbiguousCandidates,
+} from "../core/disambiguate.js";
 import { getCache, setCache } from "../core/cache.js";
 import { sanitizeSynopsis, safeTemplate } from "../core/spoiler-guard.js";
 import { searchOpenLibrary, fetchOpenLibraryDetails } from "../providers/openlibrary.js";
@@ -10,6 +16,7 @@ import { fetchGoodreadsFallback } from "../providers/goodreads.js";
 import { rewriteSynopsisWithOpenRouter } from "../llm/openrouter.js";
 
 const pendingAmbiguities = new Map();
+const MAX_PENDING_AMBIGUITIES = 40;
 
 function mergeSettings(stored) {
   const merged = {
@@ -33,8 +40,8 @@ export async function getSettings() {
   return mergeSettings(payload.settings);
 }
 
-function buildAttribution(source, llmUsed) {
-  return llmUsed ? `${source} + OpenRouter` : source;
+function buildAttribution(source, _llmUsed) {
+  return source || "Unknown";
 }
 
 function shouldBypassCachedResult(cached, settings) {
@@ -85,6 +92,89 @@ function buildTags(details) {
     directorOrCreatorTag,
     authorTag,
     castTag,
+  };
+}
+
+function buildProviderHealthNote(providerHealth) {
+  if (providerHealth.tmdb === "missing_key") {
+    return "TMDB is enabled but has no API key, so movie and TV matches may be limited.";
+  }
+
+  return providerHealth.tmdb === "error"
+    ? "Movie/TV provider was unavailable during this lookup, so results may skew toward books."
+    : undefined;
+}
+
+function buildNotFoundResponse(normalized, providerHealth) {
+  if (providerHealth?.tmdb === "missing_key" && normalized?.hintType !== "book") {
+    return {
+      status: "not_found",
+      errorCode: "TMDB_KEY_MISSING",
+      message: "No synopsis found. Add a TMDB API key in Settings to improve movie and TV matches.",
+    };
+  }
+
+  return {
+    status: "not_found",
+    errorCode: "NOT_FOUND",
+    message: "No synopsis found for that title. Try a more exact title or search manually.",
+  };
+}
+
+function buildLookupQuery(normalized) {
+  return String(normalized.query || normalized.raw || "").trim();
+}
+
+function trimPendingAmbiguities(limit = MAX_PENDING_AMBIGUITIES) {
+  while (pendingAmbiguities.size > limit) {
+    const oldestKey = pendingAmbiguities.keys().next().value;
+    if (!oldestKey) return;
+    pendingAmbiguities.delete(oldestKey);
+  }
+}
+
+function createPendingAmbiguity({ normalized, settings, candidates, cacheKey, note }) {
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  pendingAmbiguities.set(requestId, {
+    normalized,
+    settings,
+    candidates,
+    cacheKey,
+    note,
+  });
+  trimPendingAmbiguities();
+  return requestId;
+}
+
+function withChooserMeta(result, { lookupQuery, canChooseAnother, reselectRequestId }) {
+  const merged = {
+    ...result,
+    lookupQuery,
+    canChooseAnother,
+  };
+  if (reselectRequestId) {
+    merged.reselectRequestId = reselectRequestId;
+  }
+  return merged;
+}
+
+function toCacheableResult(result) {
+  const cacheable = { ...result };
+  delete cacheable.reselectRequestId;
+  return cacheable;
+}
+
+function fromCachedResult(cached, settings) {
+  const lookupQuery = String(cached.lookupQuery || cached.title || "").trim();
+  const canChooseAnother = typeof cached.canChooseAnother === "boolean" ? cached.canChooseAnother : Boolean(lookupQuery);
+
+  return {
+    ...cached,
+    lookupQuery,
+    canChooseAnother,
+    genreSource: cached.genreSource || "unknown",
+    resultUiMode: cached.resultUiMode || settings.resultUiMode,
+    fromCache: true,
   };
 }
 
@@ -286,27 +376,25 @@ async function lookupFallback(normalized, settings) {
 
 export async function lookupSynopsis(request) {
   const normalized = normalizeQuery(request.query || "");
+  const forceAmbiguity = Boolean(request.forceAmbiguity);
+
   if (!normalized.query) {
     return {
       status: "error",
       errorCode: "EMPTY_SELECTION",
-      message: "Select a title first.",
+      message: "Select a title first, or open manual search.",
     };
   }
 
   const settings = await getSettings();
   const cacheKey = buildCacheKey(normalized);
+  const lookupQuery = buildLookupQuery(normalized);
 
   const cached = await getCache(cacheKey);
-  if (cached && !shouldBypassCachedResult(cached, settings)) {
+  if (!forceAmbiguity && cached && !shouldBypassCachedResult(cached, settings)) {
     return {
       status: "ok",
-      result: {
-        ...cached,
-        genreSource: cached.genreSource || "unknown",
-        resultUiMode: cached.resultUiMode || settings.resultUiMode,
-        fromCache: true,
-      },
+      result: fromCachedResult(cached, settings),
     };
   }
 
@@ -314,7 +402,7 @@ export async function lookupSynopsis(request) {
     return {
       status: "error",
       errorCode: "LOCAL_ONLY_MISS",
-      message: "Unavailable in local-only mode without a cached match.",
+      message: "No cached match was found. Turn off local-only mode in Settings or try a title you already opened before.",
     };
   }
 
@@ -323,57 +411,122 @@ export async function lookupSynopsis(request) {
   if (!candidates.length) {
     const fallback = await lookupFallback(normalized, settings);
     if (!fallback) {
-      return {
-        status: "not_found",
-        message: "No synopsis found for that title.",
-      };
+      return buildNotFoundResponse(normalized, providerHealth);
     }
 
-    const fallbackResult = toResult(fallback, settings, false);
-    await setCache(cacheKey, fallbackResult);
+    const fallbackResult = withChooserMeta(toResult(fallback, settings, false), {
+      lookupQuery,
+      canChooseAnother: false,
+    });
+
+    await setCache(cacheKey, toCacheableResult(fallbackResult));
     return { status: "ok", result: fallbackResult };
   }
 
   const ranked = rankCandidates(candidates, normalized);
+  const note = buildProviderHealthNote(providerHealth);
+
+  if (forceAmbiguity) {
+    const chooserCandidates = selectAmbiguousCandidates(ranked, AMBIGUITY_CANDIDATE_MAX);
+    if (chooserCandidates.length < 2) {
+      return {
+        status: "not_found",
+        message: "No alternative matches found for that title.",
+      };
+    }
+
+    const requestId = createPendingAmbiguity({
+      normalized,
+      settings,
+      candidates: chooserCandidates,
+      cacheKey,
+      note,
+    });
+
+    return {
+      status: "ambiguous",
+      requestId,
+      candidates: chooserCandidates,
+      note,
+    };
+  }
+
   const decision = chooseCandidate(ranked);
 
   if (decision.status === "ambiguous") {
-    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    pendingAmbiguities.set(requestId, {
+    const requestId = createPendingAmbiguity({
       normalized,
       settings,
       candidates: decision.candidates,
       cacheKey,
+      note,
     });
 
     return {
       status: "ambiguous",
       requestId,
       candidates: decision.candidates,
-      note:
-        providerHealth.tmdb === "error"
-          ? "Movie/TV provider was unavailable during this lookup, so results may skew toward books."
-          : undefined,
+      note,
     };
   }
 
   if (decision.status !== "resolved") {
-    return {
-      status: "not_found",
-      message: "No synopsis found for that title.",
-    };
+    return buildNotFoundResponse(normalized, providerHealth);
   }
 
   const details = await hydrateCandidate(decision.candidate, settings, normalized);
   const final = await applySynopsisPipeline(details, settings);
-  const result = toResult(final, settings, false);
 
-  await setCache(cacheKey, result);
+  const chooserCandidates = selectAmbiguousCandidates(ranked, AMBIGUITY_CANDIDATE_MAX);
+  const canChooseAnother = chooserCandidates.length > 1;
+  const reselectRequestId = canChooseAnother
+    ? createPendingAmbiguity({
+        normalized,
+        settings,
+        candidates: chooserCandidates,
+        cacheKey,
+        note,
+      })
+    : undefined;
+
+  const result = withChooserMeta(toResult(final, settings, false), {
+    lookupQuery,
+    canChooseAnother,
+    reselectRequestId,
+  });
+
+  await setCache(cacheKey, toCacheableResult(result));
 
   return {
     status: "ok",
     result,
   };
+}
+
+export async function requestAlternatives(request) {
+  const requestId = String(request?.requestId || "").trim();
+  if (requestId) {
+    const pending = pendingAmbiguities.get(requestId);
+    if (pending) {
+      return {
+        status: "ambiguous",
+        requestId,
+        candidates: pending.candidates,
+        note: pending.note,
+      };
+    }
+  }
+
+  const query = String(request?.query || "").trim();
+  if (!query) {
+    return {
+      status: "error",
+      errorCode: "MISSING_QUERY",
+      message: "Could not find alternatives for this result.",
+    };
+  }
+
+  return lookupSynopsis({ query, forceAmbiguity: true });
 }
 
 export async function resolveAmbiguity(request) {
@@ -397,10 +550,13 @@ export async function resolveAmbiguity(request) {
 
   const details = await hydrateCandidate(selected, pending.settings, pending.normalized);
   const final = await applySynopsisPipeline(details, pending.settings);
-  const result = toResult(final, pending.settings, false);
+  const result = withChooserMeta(toResult(final, pending.settings, false), {
+    lookupQuery: buildLookupQuery(pending.normalized),
+    canChooseAnother: pending.candidates.length > 1,
+    reselectRequestId: request.requestId,
+  });
 
-  await setCache(pending.cacheKey, result);
-  pendingAmbiguities.delete(request.requestId);
+  await setCache(pending.cacheKey, toCacheableResult(result));
 
   return {
     status: "ok",

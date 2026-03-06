@@ -9,7 +9,7 @@ Manifest V3 Chromium extension for quick non-spoiler synopses from highlighted t
 - Book/movie/TV matching
 - Pixel-locked split panel mode with poster/book-cover pane
 - Styled no-artwork placeholder pane
-- Ambiguity chooser (up to 5 matches)
+- Ambiguity chooser (up to 6 matches)
 - Non-spoiler synopsis filtering with optional LLM rewrite (preferred by default)
 - Metadata display (author/year for books, director-or-creator/year/cast for film/TV when available)
 - Settings toggle: `With Image Panel` or `Without Image`

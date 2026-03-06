@@ -76,6 +76,30 @@ label {
   color: var(--muted);
 }
 
+.hint {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(235, 226, 215, 0.72);
+}
+
+.summary {
+  display: grid;
+  gap: 8px;
+}
+
+.summary p {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(174, 160, 138, 0.22);
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 input[type="text"],
 input[type="password"] {
   width: 100%;
@@ -92,6 +116,16 @@ input[type="text"]:focus,
 input[type="password"]:focus {
   border-color: rgba(181, 203, 240, 0.7);
   box-shadow: 0 0 0 2px rgba(164, 188, 232, 0.28);
+}
+
+.shortcut-row {
+  margin-top: 6px;
+  display: flex;
+  gap: 10px;
+}
+
+.shortcut-input {
+  cursor: pointer;
 }
 
 .check {
@@ -165,6 +199,11 @@ button.ghost {
   background: rgba(0, 0, 0, 0.14);
   color: var(--danger);
   border: 1px solid rgba(239, 176, 168, 0.45);
+}
+
+button.small {
+  padding: 10px 12px;
+  white-space: nowrap;
 }
 
 .status {

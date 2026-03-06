@@ -9,21 +9,41 @@
   <body>
     <main class="panel">
       <h1>Vivaldi Synopsis Extension</h1>
-      <p class="sub">Configure providers, LLM behavior, and privacy mode.</p>
+      <p class="sub">Configure providers, shortcut behavior, and fallback mode.</p>
+
+      <section class="group">
+        <h2>Setup Notes</h2>
+        <div id="settingsSummary" class="summary" role="status" aria-live="polite"></div>
+      </section>
 
       <section class="group">
         <h2>API Keys</h2>
         <label>
           OpenRouter API Key
           <input id="openrouterApiKey" type="password" autocomplete="off" />
+          <span class="hint">This is the main path for synopsis writing. Provider text is only the fallback.</span>
         </label>
         <label>
           OpenRouter Model
           <input id="openrouterModel" type="text" autocomplete="off" />
+          <span class="hint">Leave this alone unless you already know you want a different OpenRouter model.</span>
         </label>
         <label>
           TMDB API Key
           <input id="tmdbApiKey" type="password" autocomplete="off" />
+          <span class="hint">Needed for stronger movie and TV matching plus artwork.</span>
+        </label>
+      </section>
+
+      <section class="group">
+        <h2>Shortcut</h2>
+        <label>
+          Manual Search Shortcut
+          <div class="shortcut-row">
+            <input id="searchShortcutKey" class="shortcut-input" type="text" readonly aria-describedby="shortcutHint" />
+            <button id="resetShortcutBtn" type="button" class="ghost small">Reset</button>
+          </div>
+          <span id="shortcutHint" class="hint">Click the field, then press one key. Default: backslash. No modifier keys.</span>
         </label>
       </section>
 
@@ -34,9 +54,9 @@
           <label class="mode-option"><input id="resultUiModePanel" type="radio" name="resultUiMode" value="with_image" /> With Image Panel</label>
           <label class="mode-option"><input id="resultUiModeCompact" type="radio" name="resultUiMode" value="without_image" /> Without Image</label>
         </div>
-        <label class="check"><input id="llmEnabled" type="checkbox" /> Enable LLM rewriting</label>
-        <label class="check"><input id="llmPreferred" type="checkbox" /> Prefer LLM by default</label>
-        <label class="check"><input id="localOnlyMode" type="checkbox" /> Local-only mode (cache only)</label>
+        <label class="check"><input id="llmEnabled" type="checkbox" /> Enable AI synopsis writing</label>
+        <label class="check"><input id="llmPreferred" type="checkbox" /> Prefer AI when provider text is available</label>
+        <label class="check"><input id="localOnlyMode" type="checkbox" /> Local-only mode (only return cached matches)</label>
       </section>
 
       <section class="group">

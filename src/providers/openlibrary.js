@@ -1,5 +1,8 @@
 import { REQUEST_TIMEOUT_MS } from "../config/constants.js";
 
+const OPENLIBRARY_SEARCH_LIMIT = 20;
+const OPENLIBRARY_SEARCH_TIMEOUT_MS = Math.max(2500, REQUEST_TIMEOUT_MS * 3);
+
 async function fetchJson(url, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -78,8 +81,8 @@ export async function searchOpenLibrary(normalizedQuery) {
   if (!query) return [];
 
   const fields = encodeURIComponent("key,title,first_publish_year,author_name,cover_i,id_goodreads,isbn");
-  const url = `https://openlibrary.org/search.json?title=${query}&limit=5&fields=${fields}`;
-  const data = await fetchJson(url);
+  const url = `https://openlibrary.org/search.json?title=${query}&limit=${OPENLIBRARY_SEARCH_LIMIT}&fields=${fields}`;
+  const data = await fetchJson(url, OPENLIBRARY_SEARCH_TIMEOUT_MS);
   const docs = data.docs || [];
 
   return docs.map((doc) => {
