@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test:extension": "node --test tests/*.test.js",
+    "test:app": "npm --prefix app test",
+    "test": "npm run test:extension && npm run test:app",
+    "app:start": "npm --prefix app start"
   }
 }

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis Companion</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Vivaldi Synopsis</p>
+          <h1>Cached Results</h1>
+          <p id="statusText" class="sub">Loading local cache…</p>
+        </div>
+      </header>
+
+      <section class="layout">
+        <aside class="list-panel">
+          <label class="search">
+            <span>Search cache</span>
+            <input id="searchInput" type="search" placeholder="Title, query, or media type" />
+          </label>
+          <div id="resultsList" class="results-list"></div>
+        </aside>
+
+        <section class="detail-panel">
+          <div id="detailEmpty" class="empty-state">Select a cached result to see its synopsis and metadata.</div>
+          <article id="detailCard" class="detail-card" hidden>
+            <div class="detail-head">
+              <img id="detailArtwork" class="detail-artwork" alt="" hidden />
+              <div class="detail-head-copy">
+                <p id="detailMeta" class="detail-meta"></p>
+                <h2 id="detailTitle"></h2>
+                <p id="detailSource" class="detail-source"></p>
+              </div>
+            </div>
+            <p class="section-label">Synopsis</p>
+            <p id="detailSynopsis" class="detail-synopsis"></p>
+            <p class="section-label">Raw Result JSON</p>
+            <pre id="detailJson"></pre>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

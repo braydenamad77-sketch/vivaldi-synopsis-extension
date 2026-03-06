@@ -8,6 +8,7 @@ import {
   selectAmbiguousCandidates,
 } from "../core/disambiguate.js";
 import { getCache, setCache } from "../core/cache.js";
+import { mirrorCacheEntryToCompanionApp } from "../core/companion-app.js";
 import { appendDebugEvent, getDebugState } from "../debug/store.js";
 import { pickRandomGoodreadsTestSeed } from "../debug/goodreads-test-seeds.js";
 import { sanitizeSynopsis, safeTemplate, trimToWordLimit } from "../core/spoiler-guard.js";
@@ -785,6 +786,12 @@ export async function lookupSynopsis(request) {
     });
 
     await setCache(cacheKey, toCacheableResult(fallbackResult));
+    await mirrorCacheEntryToCompanionApp({
+      settings,
+      cacheKey,
+      lookupQuery,
+      result: toCacheableResult(fallbackResult),
+    }).catch(() => {});
     await appendLookupDebugEvent({
       status: "ok",
       query: lookupQuery,
@@ -883,6 +890,12 @@ export async function lookupSynopsis(request) {
   });
 
   await setCache(cacheKey, toCacheableResult(result));
+  await mirrorCacheEntryToCompanionApp({
+    settings,
+    cacheKey,
+    lookupQuery,
+    result: toCacheableResult(result),
+  }).catch(() => {});
   await appendLookupDebugEvent({
     status: "ok",
     query: lookupQuery,
@@ -958,6 +971,12 @@ export async function resolveAmbiguity(request) {
   });
 
   await setCache(pending.cacheKey, toCacheableResult(result));
+  await mirrorCacheEntryToCompanionApp({
+    settings: pending.settings,
+    cacheKey: pending.cacheKey,
+    lookupQuery: buildLookupQuery(pending.normalized),
+    result: toCacheableResult(result),
+  }).catch(() => {});
 
   return {
     status: "ok",
