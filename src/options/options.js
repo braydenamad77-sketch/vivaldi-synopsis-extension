@@ -15,6 +15,7 @@ const els = {
   resetShortcutBtn: document.getElementById("resetShortcutBtn"),
   resultUiModePanel: document.getElementById("resultUiModePanel"),
   resultUiModeCompact: document.getElementById("resultUiModeCompact"),
+  editorialSynopsisPopupEnabled: document.getElementById("editorialSynopsisPopupEnabled"),
   llmEnabled: document.getElementById("llmEnabled"),
   llmPreferred: document.getElementById("llmPreferred"),
   localOnlyMode: document.getElementById("localOnlyMode"),
@@ -29,6 +30,7 @@ const els = {
   settingsSummary: document.getElementById("settingsSummary"),
 };
 let shortcutDraft = DEFAULT_SEARCH_SHORTCUT_KEY;
+let statusTimeoutId = null;
 
 function mergeSettings(stored) {
   const merged = {
@@ -47,11 +49,25 @@ function mergeSettings(stored) {
   return merged;
 }
 
-function setStatus(message) {
+function inferStatusTone(message) {
+  if (!message) return "empty";
+  if (message.toLowerCase().includes("failed")) return "error";
+  if (message.toLowerCase().includes("deleted")) return "success";
+  if (message.toLowerCase().includes("saved")) return "success";
+  return "warning";
+}
+
+function setStatus(message, tone = inferStatusTone(message)) {
   els.status.textContent = message;
-  setTimeout(() => {
+  els.status.dataset.tone = message ? tone : "empty";
+  if (statusTimeoutId) {
+    clearTimeout(statusTimeoutId);
+  }
+
+  statusTimeoutId = setTimeout(() => {
     if (els.status.textContent === message) {
       els.status.textContent = "";
+      els.status.dataset.tone = "empty";
     }
   }, 2200);
 }
@@ -90,6 +106,12 @@ function renderSummary() {
     messages.push("Local-only mode is on, so uncached lookups will fail until you turn it back off.");
   }
 
+  messages.push(
+    els.editorialSynopsisPopupEnabled.checked
+      ? "The new editorial synopsis popup is enabled."
+      : "The original legacy synopsis popup is enabled.",
+  );
+
   messages.push(`Manual search shortcut: ${formatShortcutLabel(shortcutDraft)}.`);
 
   els.settingsSummary.innerHTML = messages.map((message) => `<p>${message}</p>`).join("");
@@ -111,6 +133,7 @@ async function loadSettings() {
   shortcutDraft = normalizeShortcutKey(settings.searchShortcutKey || DEFAULT_SEARCH_SHORTCUT_KEY);
   els.resultUiModePanel.checked = settings.resultUiMode === "with_image";
   els.resultUiModeCompact.checked = settings.resultUiMode === "without_image";
+  els.editorialSynopsisPopupEnabled.checked = settings.editorialSynopsisPopupEnabled;
   els.llmEnabled.checked = settings.llmEnabled;
   els.llmPreferred.checked = settings.llmPreferred;
   els.localOnlyMode.checked = settings.localOnlyMode;
@@ -129,6 +152,7 @@ function collectSettings() {
     tmdbApiKey: els.tmdbApiKey.value.trim(),
     searchShortcutKey: normalizeShortcutKey(shortcutDraft),
     resultUiMode: els.resultUiModeCompact.checked ? "without_image" : "with_image",
+    editorialSynopsisPopupEnabled: els.editorialSynopsisPopupEnabled.checked,
     llmEnabled: els.llmEnabled.checked,
     llmPreferred: els.llmPreferred.checked,
     localOnlyMode: els.localOnlyMode.checked,
@@ -178,6 +202,7 @@ els.resetShortcutBtn.addEventListener("click", () => {
   els.tmdbApiKey,
   els.resultUiModePanel,
   els.resultUiModeCompact,
+  els.editorialSynopsisPopupEnabled,
   els.llmEnabled,
   els.llmPreferred,
   els.localOnlyMode,

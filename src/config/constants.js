@@ -11,6 +11,10 @@ export const GOODREADS_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 export const GOODREADS_HELPER_URL_DEFAULT = "http://127.0.0.1:4317";
 export const MAX_CANDIDATES = 5;
 export const DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview";
+export const ENABLE_EDITORIAL_SYNOPSIS_POPUP = true;
+export function getSynopsisPopupUiFlagVersion(enabled) {
+  return enabled ? "editorial-v1" : "legacy-v1";
+}
 
 export const DEFAULT_SETTINGS = {
   openrouterApiKey: "",
@@ -20,6 +24,7 @@ export const DEFAULT_SETTINGS = {
   localOnlyMode: false,
   searchShortcutKey: "\\",
   resultUiMode: "with_image",
+  editorialSynopsisPopupEnabled: ENABLE_EDITORIAL_SYNOPSIS_POPUP,
   tmdbApiKey: "",
   goodreadsVisualFallbackEnabled: true,
   goodreadsHelperUrl: GOODREADS_HELPER_URL_DEFAULT,

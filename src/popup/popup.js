@@ -10,6 +10,11 @@ const els = {
   optionsBtn: document.getElementById("optionsBtn"),
 };
 
+function setStatus(message = "", tone = "info") {
+  els.status.textContent = message;
+  els.status.dataset.tone = message ? tone : "empty";
+}
+
 function mergeSettings(stored) {
   return {
     ...DEFAULT_SETTINGS,
@@ -28,8 +33,11 @@ async function loadPopup() {
   els.debugMode.checked = debugState.enabled;
 
   if (!settings.openrouterApiKey) {
-    els.status.textContent = "OpenRouter API key is missing. Set it in Settings before your first lookup.";
+    setStatus("OpenRouter API key is missing. Set it in Settings before your first lookup.", "warning");
+    return;
   }
+
+  setStatus("");
 }
 
 async function updateDebugMode(enabled) {
@@ -43,7 +51,7 @@ async function updateDebugMode(enabled) {
     if (chrome.sidePanel?.open) {
       await chrome.sidePanel.open({ windowId });
     }
-    els.status.textContent = "Debug mode is on. The side panel will show raw LLM input and output.";
+    setStatus("Debug mode is on. The side panel will show raw LLM input and output.", "success");
     return;
   }
 
@@ -54,7 +62,7 @@ async function updateDebugMode(enabled) {
       // Older Chromium builds may not support programmatic close.
     }
   }
-  els.status.textContent = "Debug mode is off.";
+  setStatus("Debug mode is off.", "info");
 }
 
 els.searchBtn.addEventListener("click", async () => {
@@ -64,7 +72,7 @@ els.searchBtn.addEventListener("click", async () => {
     return;
   }
 
-  els.status.textContent = response?.message || "Could not open manual search on this page.";
+  setStatus(response?.message || "Could not open manual search on this page.", "error");
 });
 
 els.optionsBtn.addEventListener("click", async () => {
@@ -74,10 +82,10 @@ els.optionsBtn.addEventListener("click", async () => {
 
 els.debugMode.addEventListener("change", () => {
   updateDebugMode(els.debugMode.checked).catch((error) => {
-    els.status.textContent = error?.message || "Could not update debug mode.";
+    setStatus(error?.message || "Could not update debug mode.", "error");
   });
 });
 
 loadPopup().catch((error) => {
-  els.status.textContent = error?.message || "Could not load popup details.";
+  setStatus(error?.message || "Could not load popup details.", "error");
 });

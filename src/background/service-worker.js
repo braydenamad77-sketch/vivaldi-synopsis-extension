@@ -1,10 +1,11 @@
 import {
+  getSynopsisPopupUiFlagVersion,
   MENU_LABEL_LOOKUP_MANUAL,
   MENU_LABEL_LOOKUP_SELECTION,
   MENU_LOOKUP_MANUAL,
   MENU_LOOKUP_SELECTION,
 } from "../config/constants.js";
-import { lookupSynopsis, requestAlternatives, resolveAmbiguity, runGoodreadsVisualDebugTest } from "./router.js";
+import { getSettings, lookupSynopsis, requestAlternatives, resolveAmbiguity, runGoodreadsVisualDebugTest } from "./router.js";
 
 const DEBUG_LOGS = false;
 
@@ -71,8 +72,24 @@ if (chrome?.runtime?.onStartup?.addListener) {
 swLog("runtime:boot");
 createContextMenu();
 
-async function injectUiAssets(tabId) {
+function buildSynopsisUiFlags(settings) {
+  const editorialSynopsisPopup = settings.editorialSynopsisPopupEnabled !== false;
+  return {
+    editorialSynopsisPopup,
+    version: getSynopsisPopupUiFlagVersion(editorialSynopsisPopup),
+  };
+}
+
+async function injectUiAssets(tabId, flags) {
   swLog("injectUiAssets:start", { tabId });
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (flags) => {
+      globalThis.__VIVALDI_SYNOPSIS_FLAGS__ = flags;
+    },
+    args: [flags],
+  });
+
   await chrome.scripting.insertCSS({
     target: { tabId },
     files: ["src/content/card.css"],
@@ -120,15 +137,37 @@ function sendMessageWithAck(tabId, payload) {
 
 async function ensureUiAssets(tabId) {
   if (!tabId) return false;
+  const settings = await getSettings();
+  const flags = buildSynopsisUiFlags(settings);
 
-  const alreadyReady = await sendMessageWithAck(tabId, { type: "VS_PING" });
+  const ping = await new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "VS_PING" }, (response) => {
+      if (chrome.runtime?.lastError) {
+        swLog("ensureUiAssets:ping:lastError", {
+          tabId,
+          message: chrome.runtime.lastError.message,
+        });
+        resolve(null);
+        return;
+      }
+      resolve(response || null);
+    });
+  });
+
+  const alreadyReady =
+    Boolean(ping?.ok) &&
+    ping?.uiFlagVersion === flags.version;
+
   if (alreadyReady) {
-    swLog("ensureUiAssets:alreadyReady", { tabId });
+    swLog("ensureUiAssets:alreadyReady", {
+      tabId,
+      uiFlagVersion: ping?.uiFlagVersion,
+    });
     return true;
   }
 
   try {
-    await injectUiAssets(tabId);
+    await injectUiAssets(tabId, flags);
   } catch (error) {
     swLog("ensureUiAssets:inject:failed", {
       tabId,
@@ -329,6 +368,39 @@ if (chrome?.runtime?.onMessage?.addListener) {
           });
         }
       });
+
+      return true;
+    }
+
+    if (message?.type === "OPEN_GOOGLE_RESULT_SEARCH") {
+      const query = String(message.query || "").trim();
+
+      if (!query) {
+        sendResponse({
+          status: "error",
+          errorCode: "INVALID_SEARCH_QUERY",
+          message: "Could not build a Google search for this result.",
+        });
+        return false;
+      }
+
+      chrome.tabs.create(
+        {
+          url: `https://www.google.com/search?q=${encodeURIComponent(query)}`,
+        },
+        (tab) => {
+          if (chrome.runtime?.lastError || !tab?.id) {
+            sendResponse({
+              status: "error",
+              errorCode: "OPEN_GOOGLE_SEARCH_FAILED",
+              message: chrome.runtime?.lastError?.message || "Could not open Google search.",
+            });
+            return;
+          }
+
+          sendResponse({ status: "ok", tabId: tab.id });
+        },
+      );
 
       return true;
     }

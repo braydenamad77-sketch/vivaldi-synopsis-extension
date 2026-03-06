@@ -17,6 +17,7 @@
   window.__VIVALDI_SYNOPSIS_INJECTED__ = true;
   cLog("script:boot", { href: window.location.href });
   const cleanupHandlers = [];
+  const SYNOPSIS_UI_FLAGS = globalThis.__VIVALDI_SYNOPSIS_FLAGS__ || {};
 
   function registerCleanup(fn) {
     cleanupHandlers.push(fn);
@@ -24,10 +25,14 @@
 
   const ROOT_ID = "vivaldi-synopsis-root";
   const CARD_ID = "vivaldi-synopsis-card";
+  const ENABLE_EDITORIAL_SYNOPSIS_POPUP = Boolean(SYNOPSIS_UI_FLAGS.editorialSynopsisPopup);
+  const SYNOPSIS_UI_FLAG_VERSION = String(SYNOPSIS_UI_FLAGS.version || "legacy-v1");
   const ENABLE_HYBRID_PANEL_BALANCE = true;
   const PANEL_HEIGHT_MIN = 390;
   const PANEL_HEIGHT_MAX = 520;
-  const FOCUSABLE_SELECTOR = ".vs-search-input, .vs-candidate, .vs-chip--action, .vs-genre-origin, .vs-close, .vs-button";
+  const BRAND_ICON_URL = chrome?.runtime?.getURL ? chrome.runtime.getURL("assets/icons/icon-48.png") : "";
+  const FOCUSABLE_SELECTOR =
+    ".vs-search-input, .vs-candidate, .vs-chip--action, .vs-genre-origin, .vs-close, .vs-button, .vs-editorial-search-input, .vs-editorial-choice, .vs-editorial-close, .vs-editorial-button";
   let searchShortcutKey = "\\";
   let lastContextMenuPos = null;
   let restoreFocusTarget = null;
@@ -320,6 +325,342 @@
       row.appendChild(chip);
     });
 
+    row.appendChild(createGoogleSearchChip(result));
+
+    return row;
+  }
+
+  function buildGoogleSearchQuery(result) {
+    const title = String(result?.title || "").trim();
+    const year = String(result?.year || "").trim();
+    return [title, year].filter(Boolean).join(" ");
+  }
+
+  function createExternalLinkIcon() {
+    const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("aria-hidden", "true");
+    icon.setAttribute("focusable", "false");
+    icon.classList.add("vs-chip-icon");
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute(
+      "d",
+      "M9.5 2h4v4h-1.5V4.56L7.28 9.28 6.22 8.22 10.94 3.5H9.5V2ZM3.5 4.5h4V6h-4A.5.5 0 0 0 3 6.5v6a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5v-4h1.5v4A2 2 0 0 1 9.5 14h-6A2 2 0 0 1 1.5 12.5v-6A2 2 0 0 1 3.5 4.5Z",
+    );
+    path.setAttribute("fill", "currentColor");
+
+    icon.appendChild(path);
+    return icon;
+  }
+
+  function createActionChip(label, onClick, options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "vs-chip vs-chip--action";
+    button.setAttribute("aria-label", options.ariaLabel || label);
+
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.appendChild(text);
+
+    if (options.withExternalIcon) {
+      button.appendChild(createExternalLinkIcon());
+    }
+
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  function createGoogleSearchChip(result) {
+    return createActionChip(
+      "Google",
+      async () => {
+        const query = buildGoogleSearchQuery(result);
+        const response = await chrome.runtime.sendMessage({
+          type: "OPEN_GOOGLE_RESULT_SEARCH",
+          query,
+        });
+
+        if (response?.status !== "ok") {
+          showError(response?.message || "Could not open Google search.");
+        }
+      },
+      {
+        ariaLabel: `Search Google for ${buildGoogleSearchQuery(result) || "this title"}`,
+        withExternalIcon: true,
+      },
+    );
+  }
+
+  function mediaTypeDisplayLabel(mediaType) {
+    if (mediaType === "movie") return "Movie";
+    if (mediaType === "tv") return "TV";
+    if (mediaType === "book") return "Book";
+    return "Media";
+  }
+
+  function createEditorialCloseButton() {
+    const close = document.createElement("button");
+    close.className = "vs-editorial-close";
+    close.type = "button";
+    close.textContent = "Close";
+    close.setAttribute("aria-label", "Close synopsis card");
+    close.addEventListener("click", closeCard);
+    return close;
+  }
+
+  function createEditorialBrand(title) {
+    const wrap = document.createElement("div");
+    wrap.className = "vs-editorial-brand";
+
+    if (BRAND_ICON_URL) {
+      const mark = document.createElement("img");
+      mark.className = "vs-editorial-brand-mark";
+      mark.src = BRAND_ICON_URL;
+      mark.alt = "";
+      wrap.appendChild(mark);
+    }
+
+    const copy = document.createElement("div");
+    copy.className = "vs-editorial-brand-copy";
+
+    const name = document.createElement("p");
+    name.className = "vs-editorial-brand-name";
+    name.textContent = "Vivaldi Synopsis";
+
+    const heading = document.createElement("h2");
+    heading.className = "vs-editorial-title";
+    heading.textContent = title;
+
+    copy.append(name, heading);
+    wrap.appendChild(copy);
+    return wrap;
+  }
+
+  function buildEditorialShell({ kind, title, subtitle, ariaLabel }) {
+    const card = document.createElement("section");
+    card.id = CARD_ID;
+    card.className = `vs-card vs-card--editorial vs-card--editorial-${kind}`;
+    card.tabIndex = -1;
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-label", ariaLabel || title);
+
+    const masthead = document.createElement("header");
+    masthead.className = "vs-editorial-masthead";
+    masthead.append(createEditorialBrand(title), createEditorialCloseButton());
+    card.appendChild(masthead);
+
+    if (subtitle) {
+      const sub = document.createElement("p");
+      sub.className = "vs-editorial-sub";
+      sub.textContent = subtitle;
+      card.appendChild(sub);
+    }
+
+    return card;
+  }
+
+  function createEditorialSectionTitle(text) {
+    const label = document.createElement("p");
+    label.className = "vs-editorial-section-title";
+    label.textContent = text;
+    return label;
+  }
+
+  function createEditorialNote(text) {
+    const note = document.createElement("p");
+    note.className = "vs-editorial-note";
+    note.textContent = text;
+    return note;
+  }
+
+  function createEditorialStatus(message, tone = "info") {
+    const status = document.createElement("p");
+    status.className = `vs-editorial-status vs-editorial-status--${tone}`;
+    status.textContent = message;
+    return status;
+  }
+
+  function createEditorialActionButton(label, onClick, options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `vs-editorial-button${options.secondary ? " vs-editorial-button--ghost" : ""}`;
+    button.textContent = label;
+    button.addEventListener("click", onClick);
+
+    if (options.withExternalIcon) {
+      button.appendChild(createExternalLinkIcon());
+      button.classList.add("vs-editorial-button--external");
+    }
+
+    return button;
+  }
+
+  function appendEditorialFact(container, labelText, valueText) {
+    if (!valueText) return;
+
+    const row = document.createElement("div");
+    row.className = "vs-editorial-fact";
+
+    const label = document.createElement("p");
+    label.className = "vs-editorial-fact-label";
+    label.textContent = labelText;
+
+    const value = document.createElement("p");
+    value.className = "vs-editorial-fact-value";
+    value.textContent = valueText;
+
+    row.append(label, value);
+    container.appendChild(row);
+  }
+
+  function buildEditorialFacts(result) {
+    const facts = document.createElement("div");
+    facts.className = "vs-editorial-facts";
+
+    appendEditorialFact(facts, "Type", mediaTypeDisplayLabel(result.mediaType));
+    appendEditorialFact(facts, "Year", result.year ? String(result.year) : "");
+    appendEditorialFact(facts, "Creator", result.author || result.directorOrCreator || "");
+    appendEditorialFact(facts, "Cast", Array.isArray(result.cast) && result.cast.length ? result.cast.slice(0, 3).join(", ") : "");
+    appendEditorialFact(facts, "Genre", result.genreLabel || "Unknown");
+    appendEditorialFact(facts, "Sources", `${result.sourceAttribution || "Unknown"}${result.fromCache ? " (cached)" : ""}`);
+
+    return facts;
+  }
+
+  function buildEditorialPanelMeta(result) {
+    const meta = document.createElement("div");
+    meta.className = "vs-editorial-panel-meta";
+
+    const items = [
+      ["Type", mediaTypeDisplayLabel(result.mediaType)],
+      ["Year", result.year ? String(result.year) : "Unknown"],
+      ["Genre", result.genreLabel || "Unknown"],
+      ["Source", `${result.sourceAttribution || "Unknown"}${result.fromCache ? " (cached)" : ""}`],
+    ];
+
+    items.forEach(([labelText, valueText]) => {
+      const item = document.createElement("div");
+      item.className = "vs-editorial-panel-stat";
+
+      const label = document.createElement("p");
+      label.className = "vs-editorial-panel-stat-label";
+      label.textContent = labelText;
+
+      const value = document.createElement("p");
+      value.className = "vs-editorial-panel-stat-value";
+      value.textContent = valueText;
+
+      item.append(label, value);
+      meta.appendChild(item);
+    });
+
+    return meta;
+  }
+
+  function buildEditorialPanelSupport(result, options = {}) {
+    const lines = [];
+
+    if (options.autoResolved) {
+      lines.push("Resolved automatically from the current selection.");
+    }
+
+    const creator = result.author || result.directorOrCreator;
+    if (creator) {
+      lines.push(`Creator: ${creator}`);
+    }
+
+    if (Array.isArray(result.cast) && result.cast.length) {
+      lines.push(`Cast: ${result.cast.slice(0, 3).join(", ")}`);
+    }
+
+    if (!lines.length) return null;
+
+    const support = document.createElement("p");
+    support.className = "vs-editorial-panel-support";
+    support.textContent = lines.join("  •  ");
+    return support;
+  }
+
+  function buildEditorialPlaceholderPane(result) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "vs-editorial-artwork-placeholder";
+
+    const title = document.createElement("p");
+    title.className = "vs-editorial-artwork-title";
+    title.textContent = buildNoArtTitle(result.title);
+
+    const divider = document.createElement("div");
+    divider.className = "vs-editorial-artwork-divider";
+
+    const year = document.createElement("p");
+    year.className = "vs-editorial-artwork-year";
+    year.textContent = result.year ? String(result.year) : mediaTypeDisplayLabel(result.mediaType);
+
+    wrapper.append(title, divider, year);
+    return wrapper;
+  }
+
+  function buildEditorialArtworkPane(result) {
+    const frame = document.createElement("section");
+    frame.className = "vs-editorial-artwork";
+
+    if (!result.artworkUrl) {
+      frame.appendChild(buildEditorialPlaceholderPane(result));
+      return frame;
+    }
+
+    const image = document.createElement("img");
+    image.className = "vs-editorial-artwork-image";
+    image.alt = `${result.title || "Artwork"} artwork`;
+    image.src = result.artworkUrl;
+    image.addEventListener("error", () => {
+      frame.textContent = "";
+      frame.appendChild(buildEditorialPlaceholderPane(result));
+    });
+
+    frame.appendChild(image);
+    return frame;
+  }
+
+  function buildEditorialActionRow(result, options = {}) {
+    const row = document.createElement("div");
+    row.className = "vs-editorial-actions";
+
+    const canChooseAnother =
+      options.autoResolved &&
+      (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
+
+    if (canChooseAnother) {
+      row.appendChild(
+        createEditorialActionButton("Wrong Match?", () => {
+          showAlternativeMatches(result).catch((error) => {
+            cLog("wrongMatch:error", { message: error?.message || String(error) });
+            showError("Could not load alternative matches.");
+          });
+        }),
+      );
+    }
+
+    row.appendChild(
+      createEditorialActionButton(
+        "Google",
+        async () => {
+          const query = buildGoogleSearchQuery(result);
+          const response = await chrome.runtime.sendMessage({
+            type: "OPEN_GOOGLE_RESULT_SEARCH",
+            query,
+          });
+
+          if (response?.status !== "ok") {
+            showError(response?.message || "Could not open Google search.");
+          }
+        },
+        { secondary: true, withExternalIcon: true },
+      ),
+    );
+
     return row;
   }
 
@@ -381,7 +722,279 @@
     container.appendChild(image);
   }
 
+  function showEditorialLoading(query) {
+    const card = buildEditorialShell({
+      kind: "loading",
+      title: "Getting synopsis",
+      subtitle: query ? `Working on "${query}" now.` : "Working on your title now.",
+      ariaLabel: "Getting synopsis",
+    });
+
+    card.appendChild(createEditorialSectionTitle("Status"));
+    card.appendChild(createEditorialStatus("Searching providers and assembling a spoiler-safe summary.", "info"));
+
+    const shimmer = document.createElement("div");
+    shimmer.className = "vs-editorial-loading";
+    shimmer.innerHTML = '<span></span><span></span><span></span>';
+
+    card.appendChild(shimmer);
+    mountCard(card);
+  }
+
+  function showEditorialCompactResult(result) {
+    const card = buildEditorialShell({
+      kind: "compact-result",
+      title: result.title || "Synopsis",
+      subtitle: `${mediaTypeDisplayLabel(result.mediaType)}${result.year ? ` • ${result.year}` : ""}`,
+      ariaLabel: result.title || "Synopsis",
+    });
+
+    const section = document.createElement("section");
+    section.className = "vs-editorial-section";
+    section.appendChild(createEditorialSectionTitle("Synopsis"));
+
+    const synopsis = document.createElement("p");
+    synopsis.className = "vs-editorial-copy";
+    synopsis.textContent = result.synopsis;
+    section.appendChild(synopsis);
+
+    card.appendChild(section);
+
+    const notes = document.createElement("section");
+    notes.className = "vs-editorial-section";
+    notes.appendChild(createEditorialSectionTitle("Lookup notes"));
+    notes.appendChild(buildEditorialFacts(result));
+    card.appendChild(notes);
+
+    card.appendChild(buildEditorialActionRow(result));
+    mountCard(card);
+  }
+
+  function showEditorialSearchInput() {
+    cLog("showEditorialSearchInput:start", { anchor: lastContextMenuPos });
+    const card = buildEditorialShell({
+      kind: "search",
+      title: "Search this page",
+      subtitle: "Type a book, movie, or TV title and I will try the exact same lookup flow from here.",
+      ariaLabel: "Manual synopsis search",
+    });
+    const openedAt = Date.now();
+
+    const form = document.createElement("form");
+    form.className = "vs-editorial-search-form";
+
+    const title = createEditorialSectionTitle("Title");
+    form.appendChild(title);
+
+    const row = document.createElement("div");
+    row.className = "vs-editorial-search-row";
+
+    const input = document.createElement("input");
+    input.className = "vs-editorial-search-input";
+    input.type = "text";
+    input.placeholder = "Search book, movie, or TV title...";
+    input.autocomplete = "off";
+    input.spellcheck = false;
+    input.setAttribute("aria-label", "Search title");
+
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.className = "vs-editorial-button";
+    submit.textContent = "Search";
+
+    row.append(input, submit);
+    form.appendChild(row);
+    form.appendChild(createEditorialNote("Use the title as it appears on the page for the best match."));
+
+    const closeIfOutside = (event) => {
+      if (Date.now() - openedAt < 280) return;
+      if (!card.contains(event.target)) {
+        cLog("showEditorialSearchInput:close:outsideClick");
+        closeCard();
+      }
+    };
+
+    const cleanup = () => {
+      document.removeEventListener("mousedown", closeIfOutside, true);
+    };
+    mergeCardCleanup(card, cleanup);
+
+    setTimeout(() => {
+      document.addEventListener("mousedown", closeIfOutside, true);
+    }, 0);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const query = input.value.trim();
+      if (!query) return;
+      await runLookupQuery(query);
+    });
+
+    card.appendChild(form);
+
+    const fallbackPos = {
+      left: window.scrollX + Math.max(20, (window.innerWidth - 480) / 2),
+      top: window.scrollY + 64,
+    };
+    mountCard(card, { anchorPos: lastContextMenuPos || fallbackPos });
+  }
+
+  function showEditorialPanelResult(result, options = {}) {
+    const card = buildEditorialShell({
+      kind: "panel",
+      title: result.title || "Synopsis",
+      subtitle: null,
+      ariaLabel: result.title || "Synopsis result",
+    });
+
+    const layout = document.createElement("div");
+    layout.className = "vs-editorial-grid";
+
+    const main = document.createElement("section");
+    main.className = "vs-editorial-main";
+    main.appendChild(buildEditorialPanelMeta(result));
+
+    const support = buildEditorialPanelSupport(result, options);
+    if (support) {
+      main.appendChild(support);
+    }
+
+    const synopsis = document.createElement("p");
+    synopsis.className = "vs-editorial-copy";
+    synopsis.textContent = result.synopsis;
+    main.appendChild(synopsis);
+
+    main.appendChild(buildEditorialActionRow(result, options));
+
+    const aside = document.createElement("aside");
+    aside.className = "vs-editorial-aside";
+    aside.appendChild(buildEditorialArtworkPane(result));
+
+    layout.append(main, aside);
+    card.appendChild(layout);
+    mountCard(card);
+  }
+
+  function appendEditorialCandidateButtons({ requestId, originalQuery, container, items }) {
+    items.forEach((candidate, index) => {
+      const button = document.createElement("button");
+      button.className = "vs-editorial-choice";
+      button.type = "button";
+
+      const text = document.createElement("span");
+      text.className = "vs-editorial-choice-text";
+      text.textContent = candidateLabel(candidate);
+
+      const rank = document.createElement("span");
+      rank.className = "vs-editorial-choice-rank";
+      rank.textContent = `#${index + 1}`;
+      rank.setAttribute("aria-hidden", "true");
+
+      button.append(text, rank);
+      button.addEventListener("click", async () => {
+        showLoading(candidate.title);
+
+        const response = await chrome.runtime.sendMessage({
+          type: "RESOLVE_AMBIGUITY",
+          requestId,
+          selectedCandidateId: candidate.id,
+          originalQuery,
+        });
+
+        if (response?.status === "ok") {
+          showResult(response.result, { autoResolved: false });
+        } else {
+          showError(response?.message || "Could not resolve your selection.", { errorCode: response?.errorCode });
+        }
+      });
+
+      container.appendChild(button);
+    });
+  }
+
+  function appendEditorialCandidateGroup({ requestId, originalQuery, parent, label, items }) {
+    if (!items.length) return;
+
+    const group = document.createElement("section");
+    group.className = "vs-editorial-section vs-editorial-section--group";
+
+    if (label) {
+      group.appendChild(createEditorialSectionTitle(label));
+    }
+
+    const list = document.createElement("div");
+    list.className = "vs-editorial-choice-list";
+    appendEditorialCandidateButtons({ requestId, originalQuery, container: list, items });
+    group.appendChild(list);
+    parent.appendChild(group);
+  }
+
+  function showEditorialAmbiguous({ requestId, candidates, originalQuery, note }) {
+    const card = buildEditorialShell({
+      kind: "ambiguous",
+      title: "Pick the right title",
+      subtitle: `Multiple matches turned up for "${originalQuery}".`,
+      ariaLabel: "Pick the right title",
+    });
+
+    if (note) {
+      card.appendChild(createEditorialStatus(note, "warning"));
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "vs-editorial-groups";
+
+    const moviesTv = candidates.filter((candidate) => candidate.mediaType === "movie" || candidate.mediaType === "tv");
+    const books = candidates.filter((candidate) => candidate.mediaType === "book");
+    const others = candidates.filter((candidate) => candidate.mediaType !== "movie" && candidate.mediaType !== "tv" && candidate.mediaType !== "book");
+
+    if (moviesTv.length && books.length) {
+      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Movies and TV", items: moviesTv });
+      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Books", items: books });
+      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Other", items: others });
+    } else {
+      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Matches", items: candidates });
+    }
+
+    card.appendChild(wrapper);
+    mountCard(card);
+  }
+
+  function showEditorialError(message, options = {}) {
+    const card = buildEditorialShell({
+      kind: "error",
+      title: "Synopsis unavailable",
+      subtitle: "The lookup could not finish cleanly this time.",
+      ariaLabel: "Synopsis unavailable",
+    });
+
+    card.appendChild(createEditorialStatus(message || "Something went wrong. Try again.", "error"));
+
+    const actions = buildErrorActions(options.errorCode, options);
+    if (actions.length) {
+      const row = document.createElement("div");
+      row.className = "vs-editorial-actions";
+
+      actions.forEach((action) => {
+        row.appendChild(
+          createEditorialActionButton(action.label, action.run, {
+            secondary: Boolean(action.secondary),
+          }),
+        );
+      });
+
+      card.appendChild(row);
+    }
+
+    mountCard(card);
+  }
+
   function showLoading(query) {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialLoading(query);
+      return;
+    }
+
     const card = buildCompactShell("Getting Synopsis");
 
     const sub = document.createElement("p");
@@ -396,6 +1009,11 @@
   }
 
   function showCompactResult(result) {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialCompactResult(result);
+      return;
+    }
+
     const card = buildCompactShell(result.title || "Synopsis");
 
     const meta = metadataRow(result);
@@ -413,6 +1031,11 @@
   }
 
   function showSearchInput() {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialSearchInput();
+      return;
+    }
+
     cLog("showSearchInput:start", { anchor: lastContextMenuPos });
     const card = document.createElement("section");
     card.id = CARD_ID;
@@ -578,6 +1201,11 @@
   }
 
   function showPanelResult(result, options = {}) {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialPanelResult(result, options);
+      return;
+    }
+
     const card = buildPanelShell();
     if (ENABLE_HYBRID_PANEL_BALANCE) {
       card.classList.add("vs-card--panel-hybrid");
@@ -634,11 +1262,7 @@
       (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
 
     if (canShowWrongMatchChip) {
-      const wrongMatch = document.createElement("button");
-      wrongMatch.type = "button";
-      wrongMatch.className = "vs-chip vs-chip--action";
-      wrongMatch.textContent = "Wrong match?";
-      wrongMatch.addEventListener("click", () => {
+      const wrongMatch = createActionChip("Wrong match?", () => {
         showAlternativeMatches(result).catch((error) => {
           cLog("wrongMatch:error", { message: error?.message || String(error) });
           showError("Could not load alternative matches.");
@@ -646,6 +1270,8 @@
       });
       chips.appendChild(wrongMatch);
     }
+
+    chips.appendChild(createGoogleSearchChip(result));
 
     const autoNote = options.autoResolved ? createAutoResolvedNote() : null;
 
@@ -696,12 +1322,26 @@
     return parts.join(" • ");
   }
 
+  function buildCandidateButtonContent(button, candidate, rank) {
+    const label = document.createElement("span");
+    label.className = "vs-candidate-text";
+    label.textContent = candidateLabel(candidate);
+
+    const rankLabel = document.createElement("span");
+    rankLabel.className = "vs-candidate-rank";
+    rankLabel.textContent = `#${rank}`;
+    rankLabel.setAttribute("aria-hidden", "true");
+
+    button.append(label, rankLabel);
+    button.setAttribute("aria-label", `${label.textContent}. Match ${rank} in this section.`);
+  }
+
   function appendCandidateButtons({ requestId, originalQuery, container, items }) {
-    items.forEach((candidate) => {
+    items.forEach((candidate, index) => {
       const button = document.createElement("button");
       button.className = "vs-candidate";
       button.type = "button";
-      button.textContent = candidateLabel(candidate);
+      buildCandidateButtonContent(button, candidate, index + 1);
       button.addEventListener("click", async () => {
         showLoading(candidate.title);
 
@@ -723,6 +1363,11 @@
   }
 
   function showAmbiguous({ requestId, candidates, originalQuery, note }) {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialAmbiguous({ requestId, candidates, originalQuery, note });
+      return;
+    }
+
     const card = buildCompactShell("Pick the Right Title");
 
     const help = document.createElement("p");
@@ -772,6 +1417,11 @@
   }
 
   function showError(message, options = {}) {
+    if (ENABLE_EDITORIAL_SYNOPSIS_POPUP) {
+      showEditorialError(message, options);
+      return;
+    }
+
     const card = buildCompactShell("Synopsis Unavailable");
     const actions = buildErrorActions(options.errorCode, options);
 
@@ -805,7 +1455,7 @@
 
     if (message.type === "VS_PING") {
       if (typeof sendResponse === "function") {
-        sendResponse({ ok: true });
+        sendResponse({ ok: true, uiFlagVersion: SYNOPSIS_UI_FLAG_VERSION });
       }
       return true;
     }

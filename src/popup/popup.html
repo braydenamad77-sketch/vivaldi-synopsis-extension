@@ -8,28 +8,41 @@
   </head>
   <body>
     <main class="popup">
-      <p class="eyebrow">Vivaldi Synopsis</p>
-      <h1>Quick Lookup</h1>
-      <p class="sub">Highlight a title and right-click, or open manual search from the current page.</p>
+      <header class="masthead">
+        <div class="brand">
+          <img class="brand-mark" src="../../assets/icons/icon-48.png" alt="" />
+          <div class="brand-copy">
+            <p class="brand-name">Vivaldi Synopsis</p>
+            <h1>Search this page</h1>
+          </div>
+        </div>
+        <p class="sub">Highlight a title and open a spoiler-safe synopsis from the current tab.</p>
+      </header>
 
-      <div class="card">
-        <p class="label">Manual search shortcut</p>
-        <p id="shortcutValue" class="value">Backslash (\)</p>
-      </div>
+      <section class="section">
+        <p class="section-title">Manual search key</p>
+        <div class="shortcut-row">
+          <p id="shortcutValue" class="shortcut-value">Backslash (\)</p>
+        </div>
+        <p class="note">Use it when a page does not expose the title cleanly.</p>
+      </section>
 
-      <label class="debug-toggle">
-        <input id="debugMode" type="checkbox" />
-        <span>
-          <strong>Debug mode</strong>
-          <small>Open the side panel and record raw LLM input/output.</small>
+      <label class="section toggle-row" for="debugMode">
+        <span class="toggle-copy">
+          <span class="section-title">Debug mode</span>
+          <span class="note">Keeps the side panel open and records raw model input and output.</span>
+        </span>
+        <span class="switch">
+          <input id="debugMode" type="checkbox" />
+          <span class="switch-ui" aria-hidden="true"></span>
         </span>
       </label>
 
-      <div id="popupStatus" class="status" role="status" aria-live="polite"></div>
+      <div id="popupStatus" class="status" data-tone="empty" role="status" aria-live="polite"></div>
 
       <div class="actions">
-        <button id="searchBtn" type="button">Open Search On This Page</button>
-        <button id="optionsBtn" type="button" class="ghost">Open Settings</button>
+        <button id="searchBtn" type="button">Search This Page</button>
+        <button id="optionsBtn" type="button" class="ghost">Settings</button>
       </div>
     </main>
 
