@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS } from "../config/constants.js";
+import { DEFAULT_SETTINGS, LLM_SOURCE_TEXT_MAX_WORDS } from "../config/constants.js";
 import { buildCacheKey, normalizeQuery } from "../core/normalize.js";
 import {
   AMBIGUITY_CANDIDATE_MAX,
@@ -8,16 +8,20 @@ import {
   selectAmbiguousCandidates,
 } from "../core/disambiguate.js";
 import { getCache, setCache } from "../core/cache.js";
-import { sanitizeSynopsis, safeTemplate } from "../core/spoiler-guard.js";
+import { appendDebugEvent, getDebugState } from "../debug/store.js";
+import { sanitizeSynopsis, safeTemplate, trimToWordLimit } from "../core/spoiler-guard.js";
 import { searchOpenLibrary, fetchOpenLibraryDetails } from "../providers/openlibrary.js";
 import { searchTmdb, fetchTmdbDetails } from "../providers/tmdb.js";
 import { fetchTvmazeArtwork } from "../providers/tvmaze.js";
-import { fetchWikipediaSummary } from "../providers/wikipedia.js";
+import { fetchWikipediaSummaryByTitle, searchWikipediaCandidates } from "../providers/wikipedia.js";
 import { fetchGoodreadsFallback } from "../providers/goodreads.js";
 import { rewriteSynopsisWithOpenRouter } from "../llm/openrouter.js";
+import { normalizeTitleForCompare } from "../core/normalize.js";
 
 const pendingAmbiguities = new Map();
 const MAX_PENDING_AMBIGUITIES = 40;
+const WIKIPEDIA_FALLBACK_LIMIT = 8;
+const WIKIPEDIA_WIDE_SEARCH_LIMIT = 10;
 
 function mergeSettings(stored) {
   const merged = {
@@ -112,6 +116,8 @@ function buildNotFoundResponse(normalized, providerHealth) {
       status: "not_found",
       errorCode: "TMDB_KEY_MISSING",
       message: "No synopsis found. Add a TMDB API key in Settings to improve movie and TV matches.",
+      lookupQuery: buildLookupQuery(normalized),
+      allowWideSearch: true,
     };
   }
 
@@ -119,11 +125,72 @@ function buildNotFoundResponse(normalized, providerHealth) {
     status: "not_found",
     errorCode: "NOT_FOUND",
     message: "No synopsis found for that title. Try a more exact title or search manually.",
+    lookupQuery: buildLookupQuery(normalized),
+    allowWideSearch: true,
   };
 }
 
 function buildLookupQuery(normalized) {
   return String(normalized.query || normalized.raw || "").trim();
+}
+
+function debugCandidateLabel(candidate) {
+  if (!candidate) return "";
+  return [candidate.title, candidate.mediaType, candidate.year, candidate.provider].filter(Boolean).join(" | ");
+}
+
+async function appendLookupDebugEvent(event) {
+  const debugState = await getDebugState();
+  if (!debugState.enabled) return;
+
+  await appendDebugEvent({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    kind: "lookup",
+    title: event.chosenTitle || event.query || "Lookup",
+    ...event,
+  });
+}
+
+export function chooseWikipediaFallbackCandidate(ranked, normalized) {
+  if (!ranked?.length) {
+    return {
+      status: "rejected",
+      reason: "no_candidates",
+    };
+  }
+
+  const [top, second] = ranked;
+  const normalizedQuery = normalizeTitleForCompare(normalized?.query || normalized?.raw || "");
+  const normalizedTitle = normalizeTitleForCompare(top.title);
+  const gap = second ? Number((top.score - second.score).toFixed(6)) : top.score;
+  const description = String(top.wikiDescription || "");
+  const looksDisambiguation =
+    /\b(topics referred to by the same term|may refer to|disambiguation)\b/i.test(description);
+
+  if (looksDisambiguation) {
+    return {
+      status: "rejected",
+      reason: "disambiguation_page",
+      candidate: top,
+      gap,
+    };
+  }
+
+  if (normalizedQuery && normalizedTitle === normalizedQuery && top.score >= 1) {
+    return {
+      status: "resolved",
+      candidate: top,
+      gap,
+    };
+  }
+
+  return {
+    status: "rejected",
+    reason: "low_title_confidence",
+    candidate: top,
+    gap,
+  };
 }
 
 function appendSourceAttribution(current, next) {
@@ -197,6 +264,7 @@ async function lookupCandidates(normalized, settings) {
   const providerHealth = {
     openlibrary: settings.providerToggles.openlibrary ? "enabled" : "disabled",
     tmdb: settings.providerToggles.tmdb ? (settings.tmdbApiKey ? "enabled" : "missing_key") : "disabled",
+    wikipedia: settings.providerToggles.wikipedia ? "enabled" : "disabled",
   };
 
   if (settings.providerToggles.openlibrary) {
@@ -226,6 +294,33 @@ async function lookupCandidates(normalized, settings) {
   };
 }
 
+async function lookupWikipediaCandidates(normalized, settings, providerHealth, limit = WIKIPEDIA_FALLBACK_LIMIT) {
+  if (!settings.providerToggles.wikipedia) return [];
+
+  try {
+    const candidates = await searchWikipediaCandidates(normalized, limit);
+    providerHealth.wikipedia = "ok";
+    return candidates;
+  } catch (_error) {
+    providerHealth.wikipedia = "error";
+    return [];
+  }
+}
+
+function mergeCandidates(primaryCandidates, wikiCandidates) {
+  const seen = new Set();
+  const merged = [];
+
+  for (const candidate of [...primaryCandidates, ...wikiCandidates]) {
+    if (!candidate?.id) continue;
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    merged.push(candidate);
+  }
+
+  return collapseBookCandidates(merged);
+}
+
 async function hydrateCandidate(candidate, settings, normalized) {
   let details;
 
@@ -233,6 +328,21 @@ async function hydrateCandidate(candidate, settings, normalized) {
     details = await fetchOpenLibraryDetails(candidate);
   } else if (candidate.provider === "tmdb") {
     details = await fetchTmdbDetails(candidate, settings.tmdbApiKey);
+  } else if (candidate.provider === "wikipedia") {
+    const wiki = await fetchWikipediaSummaryByTitle(candidate.title);
+    details = {
+      title: wiki?.title || candidate.title,
+      mediaType: candidate.mediaType === "unknown" ? normalized.hintType || "movie" : candidate.mediaType,
+      year: candidate.year || normalized.hintYear,
+      sourceAttribution: wiki?.sourceAttribution || "Wikipedia",
+      synopsisSource: wiki?.synopsisSource || "",
+      cast: [],
+      artworkUrl: wiki?.artworkUrl || candidate.artworkUrl,
+      artworkKind: wiki?.artworkKind || candidate.artworkKind || "placeholder",
+      directorOrCreator: undefined,
+      author: undefined,
+      genres: [],
+    };
   } else {
     details = {
       title: candidate.title,
@@ -281,7 +391,7 @@ async function hydrateCandidate(candidate, settings, normalized) {
   }
 
   if (details.mediaType !== "book" && settings.providerToggles.wikipedia && (!details.synopsisSource || !details.artworkUrl)) {
-    const wiki = await fetchWikipediaSummary(details.title || normalized.query);
+    const wiki = await fetchWikipediaSummaryByTitle(details.title || normalized.query);
     if (wiki?.synopsisSource && !details.synopsisSource) {
       details.synopsisSource = wiki.synopsisSource;
       details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
@@ -297,8 +407,10 @@ async function hydrateCandidate(candidate, settings, normalized) {
 }
 
 async function applySynopsisPipeline(details, settings) {
-  const baseText = sanitizeSynopsis(details.synopsisSource || "", details);
-  let synopsis = baseText || safeTemplate(details);
+  const rawProviderText = String(details.synopsisSource || "").trim();
+  const llmSourceText = rawProviderText ? trimToWordLimit(rawProviderText, LLM_SOURCE_TEXT_MAX_WORDS) : "";
+  const fallbackSynopsis = sanitizeSynopsis(rawProviderText, details) || safeTemplate(details);
+  let synopsis = fallbackSynopsis;
   let llmUsed = false;
   let fallbackGenres = [];
   const providerGenres = Array.isArray(details.genres) ? details.genres.filter(Boolean) : [];
@@ -313,17 +425,18 @@ async function applySynopsisPipeline(details, settings) {
           author: details.author,
           directorOrCreator: details.directorOrCreator,
           cast: details.cast,
-          synopsis,
+          rawSourceText: rawProviderText,
+          synopsis: llmSourceText,
         },
         settings,
       );
-      if (rewritten?.synopsis) {
-        synopsis = sanitizeSynopsis(rewritten.synopsis, details);
+      if (rewritten?.synopsis?.trim()) {
+        synopsis = rewritten.synopsis.trim();
+        fallbackGenres = Array.isArray(rewritten?.predictedGenres) ? rewritten.predictedGenres.filter(Boolean).slice(0, 2) : [];
+        llmUsed = true;
       }
-      fallbackGenres = Array.isArray(rewritten?.predictedGenres) ? rewritten.predictedGenres.filter(Boolean).slice(0, 2) : [];
-      llmUsed = true;
     } catch (_error) {
-      synopsis = sanitizeSynopsis(synopsis, details);
+      synopsis = fallbackSynopsis;
     }
   }
 
@@ -360,7 +473,7 @@ function toResult(details, settings, fromCache = false) {
   };
 }
 
-async function lookupFallback(normalized, settings) {
+async function lookupFallback(normalized, settings, providerHealth) {
   if (normalized.hintType === "book") {
     const fallback = await fetchGoodreadsFallback({
       title: normalized.query || normalized.raw,
@@ -382,33 +495,98 @@ async function lookupFallback(normalized, settings) {
       artworkKind: "placeholder",
     };
 
-    return applySynopsisPipeline(details, settings);
+    return {
+      details: await applySynopsisPipeline(details, settings),
+      debug: {
+        kind: "goodreads",
+        accepted: true,
+        title: details.title,
+      },
+    };
   }
 
-  if (!settings.providerToggles.wikipedia) return undefined;
+  if (!settings.providerToggles.wikipedia) {
+    return {
+      details: undefined,
+      debug: {
+        kind: "wikipedia",
+        accepted: false,
+        reason: "disabled",
+      },
+    };
+  }
 
-  const wiki = await fetchWikipediaSummary(normalized.query || normalized.raw);
-  if (!wiki?.synopsisSource) return undefined;
+  const wikiCandidates = await lookupWikipediaCandidates(normalized, settings, providerHealth, WIKIPEDIA_FALLBACK_LIMIT);
+  const ranked = rankCandidates(wikiCandidates, normalized);
+  const decision = chooseWikipediaFallbackCandidate(ranked, normalized);
+  if (decision.status !== "resolved") {
+    return {
+      details: undefined,
+      debug: {
+        kind: "wikipedia",
+        accepted: false,
+        reason: decision.reason,
+        topCandidate: debugCandidateLabel(decision.candidate),
+        rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+      },
+    };
+  }
 
-  const details = {
-    title: wiki.title || normalized.query,
-    mediaType: normalized.hintType || "movie",
-    year: normalized.hintYear,
-    synopsisSource: wiki.synopsisSource,
-    sourceAttribution: wiki.sourceAttribution,
-    author: undefined,
-    directorOrCreator: undefined,
-    cast: [],
-    artworkUrl: wiki.artworkUrl,
-    artworkKind: wiki.artworkKind || "placeholder",
+  const details = await hydrateCandidate(decision.candidate, settings, normalized);
+  return {
+    details: await applySynopsisPipeline(details, settings),
+    debug: {
+      kind: "wikipedia",
+      accepted: true,
+      title: details.title,
+      rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+    },
   };
+}
 
-  return applySynopsisPipeline(details, settings);
+async function buildWideSearchAmbiguity({ normalized, settings, providerHealth, primaryCandidates, cacheKey, note }) {
+  const wikiCandidates = await lookupWikipediaCandidates(normalized, settings, providerHealth, WIKIPEDIA_WIDE_SEARCH_LIMIT);
+  const combined = mergeCandidates(primaryCandidates, wikiCandidates);
+  const ranked = rankCandidates(combined, normalized);
+  const chooserCandidates = selectAmbiguousCandidates(ranked, AMBIGUITY_CANDIDATE_MAX);
+
+  if (!chooserCandidates.length) {
+    return {
+      status: "not_found",
+      message: "No low-confidence matches were found for that title.",
+      lookupQuery: buildLookupQuery(normalized),
+      allowWideSearch: false,
+      debug: {
+        wikiCandidateCount: wikiCandidates.length,
+        rankedCandidates: ranked.slice(0, 6).map(debugCandidateLabel),
+      },
+    };
+  }
+
+  const requestId = createPendingAmbiguity({
+    normalized,
+    settings,
+    candidates: chooserCandidates,
+    cacheKey,
+    note: note || "Wider Search: lower-confidence matches",
+  });
+
+  return {
+    status: "ambiguous",
+    requestId,
+    candidates: chooserCandidates,
+    note: note || "Wider Search: lower-confidence matches",
+    debug: {
+      wikiCandidateCount: wikiCandidates.length,
+      rankedCandidates: ranked.slice(0, 6).map(debugCandidateLabel),
+    },
+  };
 }
 
 export async function lookupSynopsis(request) {
   const normalized = normalizeQuery(request.query || "");
   const forceAmbiguity = Boolean(request.forceAmbiguity);
+  const widerSearch = Boolean(request.widerSearch);
 
   if (!normalized.query) {
     return {
@@ -423,7 +601,7 @@ export async function lookupSynopsis(request) {
   const lookupQuery = buildLookupQuery(normalized);
 
   const cached = await getCache(cacheKey);
-  if (!forceAmbiguity && cached && !shouldBypassCachedResult(cached, settings)) {
+  if (!forceAmbiguity && !widerSearch && cached && !shouldBypassCachedResult(cached, settings)) {
     return {
       status: "ok",
       result: fromCachedResult(cached, settings),
@@ -439,24 +617,75 @@ export async function lookupSynopsis(request) {
   }
 
   const { candidates, providerHealth } = await lookupCandidates(normalized, settings);
+  const note = buildProviderHealthNote(providerHealth);
+
+  if (widerSearch) {
+    const wide = await buildWideSearchAmbiguity({
+      normalized,
+      settings,
+      providerHealth,
+      primaryCandidates: candidates,
+      cacheKey,
+      note,
+    });
+    await appendLookupDebugEvent({
+      status: wide.status,
+      query: lookupQuery,
+      lookupMode: "wider_search",
+      normalizedQuery: normalized,
+      providerHealth,
+      primaryCandidateCount: candidates.length,
+      chosenTitle: "",
+      detail: wide.debug || {},
+    });
+    if (wide.status === "ambiguous") {
+      return {
+        status: "ambiguous",
+        requestId: wide.requestId,
+        candidates: wide.candidates,
+        note: wide.note,
+      };
+    }
+    return wide;
+  }
 
   if (!candidates.length) {
-    const fallback = await lookupFallback(normalized, settings);
-    if (!fallback) {
-      return buildNotFoundResponse(normalized, providerHealth);
+    const fallback = await lookupFallback(normalized, settings, providerHealth);
+    if (!fallback?.details) {
+      const notFound = buildNotFoundResponse(normalized, providerHealth);
+      await appendLookupDebugEvent({
+        status: "not_found",
+        query: lookupQuery,
+        lookupMode: "default",
+        normalizedQuery: normalized,
+        providerHealth,
+        primaryCandidateCount: 0,
+        chosenTitle: "",
+        detail: fallback?.debug || {},
+      });
+      return notFound;
     }
 
-    const fallbackResult = withChooserMeta(toResult(fallback, settings, false), {
+    const fallbackResult = withChooserMeta(toResult(fallback.details, settings, false), {
       lookupQuery,
       canChooseAnother: false,
     });
 
     await setCache(cacheKey, toCacheableResult(fallbackResult));
+    await appendLookupDebugEvent({
+      status: "ok",
+      query: lookupQuery,
+      lookupMode: "default",
+      normalizedQuery: normalized,
+      providerHealth,
+      primaryCandidateCount: 0,
+      chosenTitle: fallbackResult.title,
+      detail: fallback.debug || {},
+    });
     return { status: "ok", result: fallbackResult };
   }
 
   const ranked = rankCandidates(candidates, normalized);
-  const note = buildProviderHealthNote(providerHealth);
 
   if (forceAmbiguity) {
     const chooserCandidates = selectAmbiguousCandidates(ranked, AMBIGUITY_CANDIDATE_MAX);
@@ -503,7 +732,20 @@ export async function lookupSynopsis(request) {
   }
 
   if (decision.status !== "resolved") {
-    return buildNotFoundResponse(normalized, providerHealth);
+    const notFound = buildNotFoundResponse(normalized, providerHealth);
+    await appendLookupDebugEvent({
+      status: "not_found",
+      query: lookupQuery,
+      lookupMode: "default",
+      normalizedQuery: normalized,
+      providerHealth,
+      primaryCandidateCount: candidates.length,
+      chosenTitle: "",
+      detail: {
+        rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+      },
+    });
+    return notFound;
   }
 
   const details = await hydrateCandidate(decision.candidate, settings, normalized);
@@ -528,6 +770,19 @@ export async function lookupSynopsis(request) {
   });
 
   await setCache(cacheKey, toCacheableResult(result));
+  await appendLookupDebugEvent({
+    status: "ok",
+    query: lookupQuery,
+    lookupMode: "default",
+    normalizedQuery: normalized,
+    providerHealth,
+    primaryCandidateCount: candidates.length,
+    chosenTitle: result.title,
+    detail: {
+      resolvedCandidate: debugCandidateLabel(decision.candidate),
+      rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+    },
+  });
 
   return {
     status: "ok",

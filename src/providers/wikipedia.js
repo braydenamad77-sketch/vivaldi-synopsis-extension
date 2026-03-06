@@ -30,26 +30,68 @@ export function extractWikipediaArtwork(summary) {
   };
 }
 
-export async function fetchWikipediaSummary(queryText) {
-  const query = encodeURIComponent(queryText);
-  if (!query) return undefined;
+function extractYear(value) {
+  const match = String(value || "").match(/\b(19|20)\d{2}\b/);
+  return match ? Number(match[0]) : undefined;
+}
 
-  const searchUrl = `https://en.wikipedia.org/w/rest.php/v1/search/title?q=${query}&limit=1`;
-  const search = await fetchJson(searchUrl);
-  const title = search?.pages?.[0]?.title;
+export function inferWikipediaMediaType(value, hintType) {
+  const text = String(value || "");
+  if (/\b(book|novel|memoir|manga|comic|short story collection)\b/i.test(text)) return "book";
+  if (/\b(tv|television|series|miniseries|show|episode|season)\b/i.test(text)) return "tv";
+  if (/\b(film|movie|documentary|docudrama)\b/i.test(text)) return "movie";
+  return hintType || "unknown";
+}
 
-  if (!title) return undefined;
-
+export async function fetchWikipediaSummaryByTitle(title) {
+  const normalizedTitle = String(title || "").trim();
+  if (!normalizedTitle) return undefined;
   const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   const summary = await fetchJson(summaryUrl);
   const artwork = extractWikipediaArtwork(summary);
 
   return {
     provider: "wikipedia",
-    title: summary.title || title,
+    title: summary.title || normalizedTitle,
     synopsisSource: summary.extract || "",
     artworkUrl: artwork?.artworkUrl,
     artworkKind: artwork?.artworkKind,
     sourceAttribution: "Wikipedia",
   };
+}
+
+export async function searchWikipediaCandidates(normalizedQuery, limit = 8) {
+  const rawQuery = String(normalizedQuery?.query || normalizedQuery?.raw || "").trim();
+  const query = encodeURIComponent(rawQuery);
+  if (!query) return [];
+
+  const searchUrl = `https://en.wikipedia.org/w/rest.php/v1/search/title?q=${query}&limit=${limit}`;
+  const search = await fetchJson(searchUrl);
+  const pages = Array.isArray(search?.pages) ? search.pages : [];
+
+  return pages
+    .map((page) => {
+      const inferredType = inferWikipediaMediaType(page?.description || page?.excerpt || "", normalizedQuery?.hintType);
+      const year = extractYear(page?.description || page?.excerpt || "");
+      return {
+        id: `wikipedia:${page?.key || page?.title || ""}`,
+        provider: "wikipedia",
+        mediaType: inferredType,
+        title: page?.title || "",
+        year,
+        authorOrDirector: undefined,
+        artworkUrl: page?.thumbnail?.url || undefined,
+        artworkKind: page?.thumbnail?.url ? "thumbnail" : undefined,
+        wikiKey: page?.key || page?.title || "",
+        wikiDescription: page?.description || "",
+      };
+    })
+    .filter((candidate) => candidate.title);
+}
+
+export async function fetchWikipediaSummary(queryText) {
+  const candidates = await searchWikipediaCandidates({ query: queryText, raw: queryText }, 1);
+  const top = candidates[0];
+  if (!top?.title) return undefined;
+  return fetchWikipediaSummaryByTitle(top.title);
 }

@@ -1,3 +1,4 @@
+import { LLM_SOURCE_TEXT_MAX_WORDS } from "../config/constants.js";
 import { clearDebugEvents, getDebugState } from "../debug/store.js";
 
 const els = {
@@ -35,6 +36,49 @@ function renderEvent(event) {
 
   article.append(head, meta);
 
+  if (event.kind === "lookup") {
+    const queryLabel = document.createElement("p");
+    queryLabel.className = "block-label";
+    queryLabel.textContent = "Lookup Query";
+    const queryPre = document.createElement("pre");
+    queryPre.textContent = event.query || "(empty)";
+
+    const modeLabel = document.createElement("p");
+    modeLabel.className = "block-label";
+    modeLabel.textContent = "Lookup Mode";
+    const modePre = document.createElement("pre");
+    modePre.textContent = event.lookupMode || "default";
+
+    const normalizedLabel = document.createElement("p");
+    normalizedLabel.className = "block-label";
+    normalizedLabel.textContent = "Normalized Query";
+    const normalizedPre = document.createElement("pre");
+    normalizedPre.textContent = JSON.stringify(event.normalizedQuery || {}, null, 2);
+
+    const healthLabel = document.createElement("p");
+    healthLabel.className = "block-label";
+    healthLabel.textContent = "Provider Health";
+    const healthPre = document.createElement("pre");
+    healthPre.textContent = JSON.stringify(event.providerHealth || {}, null, 2);
+
+    const detailLabel = document.createElement("p");
+    detailLabel.className = "block-label";
+    detailLabel.textContent = "Decision Detail";
+    const detailPre = document.createElement("pre");
+    detailPre.textContent = JSON.stringify(
+      {
+        primaryCandidateCount: event.primaryCandidateCount,
+        chosenTitle: event.chosenTitle || "",
+        ...(event.detail || {}),
+      },
+      null,
+      2,
+    );
+
+    article.append(queryLabel, queryPre, modeLabel, modePre, normalizedLabel, normalizedPre, healthLabel, healthPre, detailLabel, detailPre);
+    return article;
+  }
+
   if (event.error) {
     const errorLabel = document.createElement("p");
     errorLabel.className = "block-label";
@@ -44,9 +88,21 @@ function renderEvent(event) {
     article.append(errorLabel, errorPre);
   }
 
+  const providerLabel = document.createElement("p");
+  providerLabel.className = "block-label";
+  providerLabel.textContent = "Raw Provider Text";
+  const providerPre = document.createElement("pre");
+  providerPre.textContent = event.providerSourceText || "(empty)";
+
+  const llmSourceLabel = document.createElement("p");
+  llmSourceLabel.className = "block-label";
+  llmSourceLabel.textContent = `Text Sent To LLM (${LLM_SOURCE_TEXT_MAX_WORDS}-word cap)`;
+  const llmSourcePre = document.createElement("pre");
+  llmSourcePre.textContent = event.llmSourceText || "(empty)";
+
   const requestLabel = document.createElement("p");
   requestLabel.className = "block-label";
-  requestLabel.textContent = "LLM Input";
+  requestLabel.textContent = "LLM Request Payload";
   const requestPre = document.createElement("pre");
   requestPre.textContent = JSON.stringify(event.request || {}, null, 2);
 
@@ -56,7 +112,7 @@ function renderEvent(event) {
   const outputPre = document.createElement("pre");
   outputPre.textContent = event.rawOutput || "(empty)";
 
-  article.append(requestLabel, requestPre, outputLabel, outputPre);
+  article.append(providerLabel, providerPre, llmSourceLabel, llmSourcePre, requestLabel, requestPre, outputLabel, outputPre);
   return article;
 }
 
@@ -73,12 +129,12 @@ async function render() {
     return;
   }
 
-  els.stateText.textContent = "Debug mode is on. The newest OpenRouter traces appear here.";
+  els.stateText.textContent = "Debug mode is on. The newest lookup and OpenRouter traces appear here.";
 
   if (!state.events.length) {
     const empty = document.createElement("div");
     empty.className = "empty";
-    empty.textContent = "No LLM traces yet. Run a lookup that uses OpenRouter.";
+    empty.textContent = "No debug traces yet. Run a lookup to capture provider and LLM details.";
     els.events.appendChild(empty);
     return;
   }

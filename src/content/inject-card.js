@@ -460,18 +460,7 @@
         return;
       }
 
-      cLog("showSearchInput:submit", { query });
-      showLoading(query);
-
-      const response = await chrome.runtime.sendMessage({
-        type: "RUN_LOOKUP_QUERY",
-        query,
-      });
-      cLog("showSearchInput:submit:response", response);
-
-      if (response?.status === "error") {
-        showError(response.message || "Lookup failed.", { errorCode: response.errorCode });
-      }
+      await runLookupQuery(query);
     });
 
     const fallbackPos = {
@@ -479,6 +468,26 @@
       top: window.scrollY + 64,
     };
     mountCard(card, { anchorPos: lastContextMenuPos || fallbackPos });
+  }
+
+  async function runLookupQuery(query, options = {}) {
+    cLog("lookup:submit", { query, widerSearch: Boolean(options.widerSearch) });
+    showLoading(query);
+
+    const response = await chrome.runtime.sendMessage({
+      type: "RUN_LOOKUP_QUERY",
+      query,
+      widerSearch: Boolean(options.widerSearch),
+    });
+    cLog("lookup:submit:response", response);
+
+    if (response?.status === "error") {
+      showError(response.message || "Lookup failed.", {
+        errorCode: response.errorCode,
+        lookupQuery: query,
+        allowWideSearch: Boolean(options.widerSearch),
+      });
+    }
   }
 
   function createAutoResolvedNote() {
@@ -513,7 +522,8 @@
     return wrap;
   }
 
-  function buildErrorActions(errorCode) {
+  function buildErrorActions(errorCode, options = {}) {
+    const lookupQuery = String(options.lookupQuery || "").trim();
     const actions = [
       {
         label: "Search manually",
@@ -526,6 +536,18 @@
         label: "Open Settings",
         run: () => chrome.runtime.openOptionsPage(),
         secondary: true,
+      });
+    }
+
+    if (options.allowWideSearch && lookupQuery) {
+      actions.unshift({
+        label: "Wider Search",
+        run: () => {
+          runLookupQuery(lookupQuery, { widerSearch: true }).catch((error) => {
+            cLog("widerSearch:error", { message: error?.message || String(error) });
+            showError("Could not run wider search.", { errorCode: "WIDER_SEARCH_FAILED", lookupQuery });
+          });
+        },
       });
     }
 
@@ -751,7 +773,7 @@
 
   function showError(message, options = {}) {
     const card = buildCompactShell("Synopsis Unavailable");
-    const actions = buildErrorActions(options.errorCode);
+    const actions = buildErrorActions(options.errorCode, options);
 
     const body = document.createElement("p");
     body.className = "vs-error";
@@ -812,7 +834,11 @@
     }
 
     if (message.type === "SHOW_ERROR") {
-      showError(message.message, { errorCode: message.errorCode });
+      showError(message.message, {
+        errorCode: message.errorCode,
+        lookupQuery: message.lookupQuery,
+        allowWideSearch: message.allowWideSearch,
+      });
     }
 
     return false;

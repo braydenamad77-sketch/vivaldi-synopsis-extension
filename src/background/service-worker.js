@@ -167,7 +167,7 @@ async function showManualSearchInput(tabId) {
   return true;
 }
 
-async function processLookup(selectionText, tabId) {
+async function processLookup(selectionText, tabId, options = {}) {
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   safeSendMessage(tabId, {
@@ -178,7 +178,10 @@ async function processLookup(selectionText, tabId) {
 
   let response;
   try {
-    response = await lookupSynopsis({ query: selectionText });
+    response = await lookupSynopsis({
+      query: selectionText,
+      widerSearch: Boolean(options.widerSearch),
+    });
   } catch (error) {
     response = {
       status: "error",
@@ -213,6 +216,8 @@ async function processLookup(selectionText, tabId) {
     requestId,
     errorCode: response.errorCode || response.status,
     message: response.message || "Could not fetch synopsis.",
+    lookupQuery: response.lookupQuery || selectionText,
+    allowWideSearch: Boolean(response.allowWideSearch),
   });
 }
 
@@ -266,7 +271,7 @@ if (chrome?.runtime?.onMessage?.addListener) {
         return false;
       }
 
-      processLookup(query, tabId)
+      processLookup(query, tabId, { widerSearch: Boolean(message.widerSearch) })
         .then(() => sendResponse({ status: "ok" }))
         .catch((error) =>
           sendResponse({

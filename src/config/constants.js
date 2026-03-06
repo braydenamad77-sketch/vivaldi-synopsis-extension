@@ -4,6 +4,7 @@ export const MENU_LABEL_LOOKUP_SELECTION = "Get Synopsis";
 export const MENU_LABEL_LOOKUP_MANUAL = "Search Synopsis";
 export const REQUEST_TIMEOUT_MS = 1200;
 export const LLM_TIMEOUT_MS = 1800;
+export const LLM_SOURCE_TEXT_MAX_WORDS = 750;
 export const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 export const GOODREADS_TIMEOUT_MS = 2800;
 export const GOODREADS_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;

@@ -218,7 +218,9 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
 
     return parseOpenRouterOutput(content);
   } catch (error) {
-    const message = error?.message || String(error);
+    const message = controller.signal.aborted
+      ? `OpenRouter request timed out after ${LLM_TIMEOUT_MS}ms.`
+      : error?.message || String(error);
     if (!debugCaptured) {
       await captureDebugEvent({
         input,
@@ -241,11 +243,14 @@ async function captureDebugEvent({ input, requestPayload, rawOutput, status, err
   await appendDebugEvent({
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     createdAt: new Date().toISOString(),
+    kind: "llm",
     status,
     error: error || "",
     title: input?.title || "Unknown",
     mediaType: input?.mediaType || "unknown",
     year: input?.year,
+    providerSourceText: String(input?.rawSourceText || ""),
+    llmSourceText: String(input?.synopsis || ""),
     request: requestPayload,
     rawOutput: rawOutput || "",
   });
