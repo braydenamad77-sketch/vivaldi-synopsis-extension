@@ -3,6 +3,7 @@ import { clearDebugEvents, getDebugState } from "../debug/store.js";
 
 const els = {
   clearBtn: document.getElementById("clearBtn"),
+  goodreadsTestBtn: document.getElementById("goodreadsTestBtn"),
   stateText: document.getElementById("stateText"),
   events: document.getElementById("events"),
 };
@@ -36,6 +37,99 @@ function renderEvent(event) {
 
   article.append(head, meta);
 
+  if (event.kind === "goodreads_test") {
+    const helperLabel = document.createElement("p");
+    helperLabel.className = "block-label";
+    helperLabel.textContent = "Goodreads Helper";
+    const helperPre = document.createElement("pre");
+    helperPre.textContent = JSON.stringify(
+      {
+        author: event.author || "",
+        helperStatus: event.helperStatus || "",
+        resolvedUrl: event.resolvedUrl || "",
+        screenshotsCaptured: event.screenshotsCaptured || 0,
+        ...(event.helperDebug || {}),
+      },
+      null,
+      2,
+    );
+
+    article.append(helperLabel, helperPre);
+
+    if (event.previewScreenshot) {
+      const screenshotLabel = document.createElement("p");
+      screenshotLabel.className = "block-label";
+      screenshotLabel.textContent = "Goodreads Screenshot";
+      const image = document.createElement("img");
+      image.className = "shot";
+      image.alt = `${event.title || "Goodreads"} screenshot`;
+      image.src = event.previewScreenshot;
+      article.append(screenshotLabel, image);
+    }
+
+    const providerLabel = document.createElement("p");
+    providerLabel.className = "block-label";
+    providerLabel.textContent = "Extracted Goodreads Description";
+    const providerPre = document.createElement("pre");
+    providerPre.textContent = event.providerSourceText || "(empty)";
+
+    const visualLabel = document.createElement("p");
+    visualLabel.className = "block-label";
+    visualLabel.textContent = `Visual LLM Output${event.visualLlmModel ? ` (${event.visualLlmModel})` : ""}`;
+    const visualPre = document.createElement("pre");
+    visualPre.textContent = event.visualLlmOutput || "(empty)";
+
+    const synopsisLabel = document.createElement("p");
+    synopsisLabel.className = "block-label";
+    synopsisLabel.textContent = "Synopsis LLM Request";
+    const synopsisPre = document.createElement("pre");
+    synopsisPre.textContent = JSON.stringify(event.synopsisRequest || {}, null, 2);
+
+    const synopsisOutputLabel = document.createElement("p");
+    synopsisOutputLabel.className = "block-label";
+    synopsisOutputLabel.textContent = "Synopsis LLM Output";
+    const synopsisOutputPre = document.createElement("pre");
+    synopsisOutputPre.textContent = event.synopsisLlmOutput || "(empty)";
+
+    const finalLabel = document.createElement("p");
+    finalLabel.className = "block-label";
+    finalLabel.textContent = "Final Synopsis";
+    const finalPre = document.createElement("pre");
+    finalPre.textContent = event.finalSynopsis || "(empty)";
+
+    const genresLabel = document.createElement("p");
+    genresLabel.className = "block-label";
+    genresLabel.textContent = "Final Genres";
+    const genresPre = document.createElement("pre");
+    genresPre.textContent = JSON.stringify(event.finalGenres || [], null, 2);
+
+    article.append(
+      providerLabel,
+      providerPre,
+      visualLabel,
+      visualPre,
+      synopsisLabel,
+      synopsisPre,
+      synopsisOutputLabel,
+      synopsisOutputPre,
+      finalLabel,
+      finalPre,
+      genresLabel,
+      genresPre,
+    );
+
+    if (event.error) {
+      const errorLabel = document.createElement("p");
+      errorLabel.className = "block-label";
+      errorLabel.textContent = "Error";
+      const errorPre = document.createElement("pre");
+      errorPre.textContent = event.error;
+      article.append(errorLabel, errorPre);
+    }
+
+    return article;
+  }
+
   if (event.kind === "lookup") {
     const queryLabel = document.createElement("p");
     queryLabel.className = "block-label";
@@ -65,17 +159,28 @@ function renderEvent(event) {
     detailLabel.className = "block-label";
     detailLabel.textContent = "Decision Detail";
     const detailPre = document.createElement("pre");
+    const providerTrace = Array.isArray(event.detail?.providerTrace) ? event.detail.providerTrace : [];
     detailPre.textContent = JSON.stringify(
       {
         primaryCandidateCount: event.primaryCandidateCount,
         chosenTitle: event.chosenTitle || "",
-        ...(event.detail || {}),
+        ...Object.fromEntries(Object.entries(event.detail || {}).filter(([key]) => key !== "providerTrace")),
       },
       null,
       2,
     );
 
     article.append(queryLabel, queryPre, modeLabel, modePre, normalizedLabel, normalizedPre, healthLabel, healthPre, detailLabel, detailPre);
+
+    if (providerTrace.length) {
+      const traceLabel = document.createElement("p");
+      traceLabel.className = "block-label";
+      traceLabel.textContent = "Provider Trace";
+      const tracePre = document.createElement("pre");
+      tracePre.textContent = JSON.stringify(providerTrace, null, 2);
+      article.append(traceLabel, tracePre);
+    }
+
     return article;
   }
 
@@ -119,6 +224,7 @@ function renderEvent(event) {
 async function render() {
   const state = await getDebugState();
   els.events.textContent = "";
+  els.goodreadsTestBtn.disabled = !state.enabled;
 
   if (!state.enabled) {
     els.stateText.textContent = "Debug mode is off. Turn it on from the extension popup.";
@@ -147,6 +253,28 @@ async function render() {
 els.clearBtn.addEventListener("click", async () => {
   await clearDebugEvents();
   await render();
+});
+
+els.goodreadsTestBtn.addEventListener("click", async () => {
+  els.goodreadsTestBtn.disabled = true;
+  const previous = els.stateText.textContent;
+  els.stateText.textContent = "Running Goodreads visual test...";
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "RUN_GOODREADS_VISUAL_TEST" });
+    els.stateText.textContent =
+      response?.status === "ok"
+        ? `Goodreads test finished for ${response.title || "book"}.`
+        : response?.message || "Goodreads test failed.";
+    await render();
+  } catch (error) {
+    els.stateText.textContent = error?.message || "Could not run Goodreads test.";
+  } finally {
+    els.goodreadsTestBtn.disabled = false;
+    if (!els.events.children.length) {
+      els.stateText.textContent = previous;
+    }
+  }
 });
 
 if (chrome?.storage?.onChanged?.addListener) {

@@ -144,7 +144,7 @@ export function parseOpenRouterOutput(rawText) {
   return { synopsis, predictedGenres };
 }
 
-export async function rewriteSynopsisWithOpenRouter(input, settings) {
+export async function rewriteSynopsisWithOpenRouter(input, settings, options = {}) {
   if (!settings.openrouterApiKey) {
     throw new Error("OpenRouter API key missing");
   }
@@ -183,13 +183,15 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
     });
 
     if (!response.ok) {
-      await captureDebugEvent({
-        input,
-        requestPayload,
-        rawOutput: "",
-        status: "error",
-        error: `OpenRouter request failed: ${response.status}`,
-      });
+      if (!options.skipDebugEvent) {
+        await captureDebugEvent({
+          input,
+          requestPayload,
+          rawOutput: "",
+          status: "error",
+          error: `OpenRouter request failed: ${response.status}`,
+        });
+      }
       debugCaptured = true;
       throw new Error(`OpenRouter request failed: ${response.status}`);
     }
@@ -197,38 +199,55 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      await captureDebugEvent({
-        input,
-        requestPayload,
-        rawOutput: "",
-        status: "error",
-        error: "OpenRouter returned empty response",
-      });
+      if (!options.skipDebugEvent) {
+        await captureDebugEvent({
+          input,
+          requestPayload,
+          rawOutput: "",
+          status: "error",
+          error: "OpenRouter returned empty response",
+        });
+      }
       debugCaptured = true;
       throw new Error("OpenRouter returned empty response");
     }
 
-    await captureDebugEvent({
-      input,
-      requestPayload,
-      rawOutput: content,
-      status: "success",
-    });
+    if (!options.skipDebugEvent) {
+      await captureDebugEvent({
+        input,
+        requestPayload,
+        rawOutput: content,
+        status: "success",
+      });
+    }
     debugCaptured = true;
 
-    return parseOpenRouterOutput(content);
+    const parsed = parseOpenRouterOutput(content);
+    if (options.includeDebugData) {
+      return {
+        ...parsed,
+        debug: {
+          requestPayload,
+          rawOutput: content,
+        },
+      };
+    }
+
+    return parsed;
   } catch (error) {
     const message = controller.signal.aborted
       ? `OpenRouter request timed out after ${LLM_TIMEOUT_MS}ms.`
       : error?.message || String(error);
     if (!debugCaptured) {
-      await captureDebugEvent({
-        input,
-        requestPayload,
-        rawOutput: "",
-        status: "error",
-        error: message,
-      });
+      if (!options.skipDebugEvent) {
+        await captureDebugEvent({
+          input,
+          requestPayload,
+          rawOutput: "",
+          status: "error",
+          error: message,
+        });
+      }
     }
     throw error;
   } finally {

@@ -1,0 +1,136 @@
+direction: down
+
+title: "Vivaldi Synopsis Extension: Lookup and Classification Flow"
+
+start: {
+  label: "Start"
+  style: {
+    fill: "#F8F2EA"
+    stroke: "#8B6F52"
+  }
+
+  trigger: "1. User selects text\nor opens manual search"
+  worker: "2. Service worker ensures\nUI is injected and shows loading"
+}
+
+core: {
+  label: "Core Router Flow"
+  style: {
+    fill: "#FFF9F3"
+    stroke: "#8B6F52"
+  }
+
+  normalize: "3. Normalize query\nclean text, strip noise,\nextract year/type hints"
+  cache_gate: "4. Cache hit?"
+  local_only_gate: "5. Local-only mode?"
+  primary_lookup: "6. Query primary providers\nOpen Library + TMDB"
+  candidate_gate: "7. Any primary candidates?"
+  primary_rank: "8. Rank primary candidates"
+  resolve_gate: "9. Auto-resolve or ambiguous?"
+  hydrate: "10. Hydrate chosen candidate\nfetch full details"
+  enrich: "11. Fill gaps when needed\nBooks -> Goodreads synopsis\nTV -> TVmaze artwork\nMovie/TV -> Wikipedia text/art only if missing"
+  pipeline: "12. Build synopsis result\nraw provider text -> 750-word cap\nOpenRouter rewrite if enabled\nfallback summary only if LLM is off or fails"
+  finalize: "13. Finalize result\nassemble synopsis, genres,\nartwork, source labels,\ncache, debug trace"
+}
+
+fallbacks: {
+  label: "No-Candidate Fallback Lane"
+  style: {
+    fill: "#F6F4FB"
+    stroke: "#6E5E8A"
+  }
+
+  book_fallback: "Book hint -> Goodreads fallback"
+  wiki_search: "Wikipedia wider title search\nget several candidate titles"
+  wiki_rank: "Rank Wikipedia candidates"
+  wiki_gate: "Exact, confident,\nnon-disambiguation match?"
+  wiki_summary: "Fetch Wikipedia summary\nfor accepted title"
+  not_found: "No confident fallback\nreturn Not Found"
+}
+
+chooser: {
+  label: "Chooser / Low-Confidence Lane"
+  style: {
+    fill: "#EEF6FB"
+    stroke: "#4F748B"
+  }
+
+  ambiguous: "Show grouped chooser\nMovies & TV / Books"
+  user_pick: "User picks candidate"
+  wrong_match: "Wrong match?\nrequest alternatives"
+  wider_search: "Wider Search\nrerun with lower-confidence results"
+  wider_merge: "Merge primary candidates\nwith Wikipedia candidates\nand show chooser only"
+}
+
+ui: {
+  label: "UI Outcomes"
+  style: {
+    fill: "#F4FAF2"
+    stroke: "#5F7A54"
+  }
+
+  cached_result: "Show cached result"
+  result: "Show synopsis panel"
+  error: "Show error state"
+}
+
+debug: {
+  label: "Debug Side Panel"
+  style: {
+    fill: "#FBF7EE"
+    stroke: "#8B6F52"
+  }
+
+  lookup_trace: "Lookup trace\nnormalized query\nprovider health\ncandidate counts\ndecision detail"
+  llm_trace: "LLM trace\nraw provider text\ntext sent to model\nrequest payload\nraw output"
+}
+
+start.trigger -> start.worker
+start.worker -> core.normalize
+core.normalize -> core.cache_gate
+
+core.cache_gate -> ui.cached_result: "yes"
+ui.cached_result -> debug.lookup_trace: "cached lookup trace"
+
+core.cache_gate -> core.local_only_gate: "no"
+core.local_only_gate -> ui.error: "yes"
+core.local_only_gate -> core.primary_lookup: "no"
+
+core.primary_lookup -> core.candidate_gate
+core.candidate_gate -> core.primary_rank: "yes"
+core.candidate_gate -> fallbacks.book_fallback: "no + book hint"
+core.candidate_gate -> fallbacks.wiki_search: "no + not book"
+
+core.primary_rank -> core.resolve_gate
+core.resolve_gate -> chooser.ambiguous: "ambiguous"
+core.resolve_gate -> core.hydrate: "resolved"
+
+core.hydrate -> core.enrich
+core.enrich -> core.pipeline
+core.pipeline -> core.finalize
+core.finalize -> ui.result
+core.finalize -> debug.lookup_trace
+core.pipeline -> debug.llm_trace: "if LLM is used"
+
+fallbacks.book_fallback -> core.pipeline: "accepted"
+
+fallbacks.wiki_search -> fallbacks.wiki_rank
+fallbacks.wiki_rank -> fallbacks.wiki_gate
+fallbacks.wiki_gate -> fallbacks.wiki_summary: "yes"
+fallbacks.wiki_gate -> fallbacks.not_found: "no"
+fallbacks.wiki_summary -> core.pipeline
+
+fallbacks.not_found -> ui.error
+fallbacks.not_found -> debug.lookup_trace
+
+ui.result -> chooser.wrong_match: "optional"
+chooser.wrong_match -> chooser.ambiguous: "request alternatives"
+
+ui.error -> chooser.wider_search: "optional"
+chooser.wider_search -> chooser.wider_merge
+chooser.wider_merge -> chooser.ambiguous
+
+chooser.ambiguous -> chooser.user_pick
+chooser.user_pick -> core.hydrate
+
+ui.error -> debug.lookup_trace: "failed lookup trace"

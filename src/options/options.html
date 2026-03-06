@@ -60,6 +60,16 @@
       </section>
 
       <section class="group">
+        <h2>Goodreads Visual Fallback</h2>
+        <label class="check"><input id="goodreadsVisualFallbackEnabled" type="checkbox" /> Enable Goodreads visual fallback for books</label>
+        <label>
+          Local Helper URL
+          <input id="goodreadsHelperUrl" type="text" autocomplete="off" />
+          <span class="hint">Default: http://127.0.0.1:4317. This must stay on localhost and uses your saved OpenRouter key to read Goodreads screenshots.</span>
+        </label>
+      </section>
+
+      <section class="group">
         <h2>Providers</h2>
         <label class="check"><input id="providerOpenLibrary" type="checkbox" /> Open Library (books)</label>
         <label class="check"><input id="providerTmdb" type="checkbox" /> TMDB (movies/TV)</label>

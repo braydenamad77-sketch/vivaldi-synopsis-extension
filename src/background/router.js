@@ -9,6 +9,7 @@ import {
 } from "../core/disambiguate.js";
 import { getCache, setCache } from "../core/cache.js";
 import { appendDebugEvent, getDebugState } from "../debug/store.js";
+import { pickRandomGoodreadsTestSeed } from "../debug/goodreads-test-seeds.js";
 import { sanitizeSynopsis, safeTemplate, trimToWordLimit } from "../core/spoiler-guard.js";
 import { searchOpenLibrary, fetchOpenLibraryDetails } from "../providers/openlibrary.js";
 import { searchTmdb, fetchTmdbDetails } from "../providers/tmdb.js";
@@ -323,11 +324,25 @@ function mergeCandidates(primaryCandidates, wikiCandidates) {
 
 async function hydrateCandidate(candidate, settings, normalized) {
   let details;
+  const providerTrace = [];
 
   if (candidate.provider === "openlibrary") {
     details = await fetchOpenLibraryDetails(candidate);
+    providerTrace.push({
+      step: "openlibrary_details",
+      status: details.synopsisSource ? "ok" : "missing_synopsis",
+      title: details.title,
+      hasArtwork: Boolean(details.artworkUrl),
+    });
   } else if (candidate.provider === "tmdb") {
     details = await fetchTmdbDetails(candidate, settings.tmdbApiKey);
+    providerTrace.push({
+      step: "tmdb_details",
+      status: "ok",
+      title: details.title,
+      hasSynopsis: Boolean(details.synopsisSource),
+      hasArtwork: Boolean(details.artworkUrl),
+    });
   } else if (candidate.provider === "wikipedia") {
     const wiki = await fetchWikipediaSummaryByTitle(candidate.title);
     details = {
@@ -343,6 +358,12 @@ async function hydrateCandidate(candidate, settings, normalized) {
       author: undefined,
       genres: [],
     };
+    providerTrace.push({
+      step: "wikipedia_details",
+      status: details.synopsisSource ? "ok" : "missing_synopsis",
+      title: details.title,
+      hasArtwork: Boolean(details.artworkUrl),
+    });
   } else {
     details = {
       title: candidate.title,
@@ -354,6 +375,12 @@ async function hydrateCandidate(candidate, settings, normalized) {
       artworkUrl: candidate.artworkUrl,
       artworkKind: candidate.artworkKind || "placeholder",
     };
+    providerTrace.push({
+      step: "candidate_seed",
+      status: "unknown",
+      title: details.title,
+      hasArtwork: Boolean(details.artworkUrl),
+    });
   }
 
   if (details.mediaType === "book" && !details.synopsisSource) {
@@ -364,7 +391,7 @@ async function hydrateCandidate(candidate, settings, normalized) {
       goodreadsIds: details.goodreadsIds || candidate.goodreadsIds,
       isbn10: details.isbn10 || candidate.isbn10,
       isbn13: details.isbn13 || candidate.isbn13,
-    });
+    }, settings);
 
     if (fallback?.synopsisSource) {
       details.synopsisSource = fallback.synopsisSource;
@@ -374,6 +401,24 @@ async function hydrateCandidate(candidate, settings, normalized) {
       if ((!Array.isArray(details.genres) || !details.genres.length) && Array.isArray(fallback.genres)) {
         details.genres = fallback.genres;
       }
+      providerTrace.push({
+        step: "goodreads_visual_fallback",
+        status: "ok",
+        title: fallback.title || details.title,
+        author: fallback.author,
+        resolvedUrl: fallback.resolvedUrl,
+        screenshotsCaptured: fallback.screenshotsCaptured || 0,
+      });
+    } else {
+      providerTrace.push({
+        step: "goodreads_visual_fallback",
+        status: fallback?.status || "missing_synopsis",
+        title: details.title,
+        author: details.author || candidate.authorOrDirector,
+        resolvedUrl: fallback?.resolvedUrl,
+        screenshotsCaptured: fallback?.screenshotsCaptured || 0,
+        detail: fallback?.debug || {},
+      });
     }
   }
 
@@ -387,10 +432,21 @@ async function hydrateCandidate(candidate, settings, normalized) {
       details.artworkUrl = tvmaze.artworkUrl;
       details.artworkKind = tvmaze.artworkKind || "poster";
       details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, tvmaze.sourceAttribution);
+      providerTrace.push({
+        step: "tvmaze_artwork",
+        status: "ok",
+      });
+    } else {
+      providerTrace.push({
+        step: "tvmaze_artwork",
+        status: "no_artwork",
+      });
     }
   }
 
   if (details.mediaType !== "book" && settings.providerToggles.wikipedia && (!details.synopsisSource || !details.artworkUrl)) {
+    const hadSynopsisBeforeWiki = Boolean(details.synopsisSource);
+    const hadArtworkBeforeWiki = Boolean(details.artworkUrl);
     const wiki = await fetchWikipediaSummaryByTitle(details.title || normalized.query);
     if (wiki?.synopsisSource && !details.synopsisSource) {
       details.synopsisSource = wiki.synopsisSource;
@@ -401,9 +457,18 @@ async function hydrateCandidate(candidate, settings, normalized) {
       details.artworkKind = wiki.artworkKind || "thumbnail";
       details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
     }
+    providerTrace.push({
+      step: "wikipedia_enrichment",
+      status: wiki?.synopsisSource || wiki?.artworkUrl ? "ok" : "no_enrichment",
+      addedSynopsis: Boolean(wiki?.synopsisSource && !hadSynopsisBeforeWiki),
+      addedArtwork: Boolean(wiki?.artworkUrl && !hadArtworkBeforeWiki),
+    });
   }
 
-  return details;
+  return {
+    ...details,
+    providerTrace,
+  };
 }
 
 async function applySynopsisPipeline(details, settings) {
@@ -414,8 +479,14 @@ async function applySynopsisPipeline(details, settings) {
   let llmUsed = false;
   let fallbackGenres = [];
   const providerGenres = Array.isArray(details.genres) ? details.genres.filter(Boolean) : [];
+  const providerTrace = Array.isArray(details.providerTrace) ? [...details.providerTrace] : [];
 
-  if (settings.llmEnabled && settings.openrouterApiKey && (settings.llmPreferred || !details.synopsisSource)) {
+  if (!rawProviderText) {
+    providerTrace.push({
+      step: "llm_rewrite",
+      status: "skipped_empty_source",
+    });
+  } else if (settings.llmEnabled && settings.openrouterApiKey && (settings.llmPreferred || !details.synopsisSource)) {
     try {
       const rewritten = await rewriteSynopsisWithOpenRouter(
         {
@@ -434,10 +505,23 @@ async function applySynopsisPipeline(details, settings) {
         synopsis = rewritten.synopsis.trim();
         fallbackGenres = Array.isArray(rewritten?.predictedGenres) ? rewritten.predictedGenres.filter(Boolean).slice(0, 2) : [];
         llmUsed = true;
+        providerTrace.push({
+          step: "llm_rewrite",
+          status: "ok",
+        });
       }
     } catch (_error) {
       synopsis = fallbackSynopsis;
+      providerTrace.push({
+        step: "llm_rewrite",
+        status: "error",
+      });
     }
+  } else {
+    providerTrace.push({
+      step: "llm_rewrite",
+      status: "skipped_disabled_or_not_needed",
+    });
   }
 
   return {
@@ -447,6 +531,7 @@ async function applySynopsisPipeline(details, settings) {
     genreSource: providerGenres.length ? "provider" : fallbackGenres.length ? "ai" : "unknown",
     sourceAttribution: buildAttribution(details.sourceAttribution, llmUsed),
     artworkKind: details.artworkUrl ? details.artworkKind || "poster" : "placeholder",
+    providerTrace,
   };
 }
 
@@ -478,8 +563,20 @@ async function lookupFallback(normalized, settings, providerHealth) {
     const fallback = await fetchGoodreadsFallback({
       title: normalized.query || normalized.raw,
       year: normalized.hintYear,
-    });
-    if (!fallback?.synopsisSource) return undefined;
+    }, settings);
+    if (!fallback?.synopsisSource) {
+      return {
+        details: undefined,
+        debug: {
+          kind: "goodreads_visual",
+          accepted: false,
+          reason: fallback?.status || "missing_synopsis",
+          detail: fallback?.debug || {},
+          resolvedUrl: fallback?.resolvedUrl,
+          screenshotsCaptured: fallback?.screenshotsCaptured || 0,
+        },
+      };
+    }
 
     const details = {
       title: fallback.title || normalized.query,
@@ -493,14 +590,28 @@ async function lookupFallback(normalized, settings, providerHealth) {
       genres: fallback.genres || [],
       artworkUrl: undefined,
       artworkKind: "placeholder",
+      providerTrace: [
+        {
+          step: "goodreads_visual_fallback",
+          status: "ok",
+          title: fallback.title || normalized.query,
+          author: fallback.author,
+          resolvedUrl: fallback.resolvedUrl,
+          screenshotsCaptured: fallback.screenshotsCaptured || 0,
+        },
+      ],
     };
 
+    const finalDetails = await applySynopsisPipeline(details, settings);
     return {
-      details: await applySynopsisPipeline(details, settings),
+      details: finalDetails,
       debug: {
-        kind: "goodreads",
+        kind: "goodreads_visual",
         accepted: true,
         title: details.title,
+        resolvedUrl: fallback.resolvedUrl,
+        screenshotsCaptured: fallback.screenshotsCaptured || 0,
+        providerTrace: finalDetails.providerTrace || [],
       },
     };
   }
@@ -533,13 +644,15 @@ async function lookupFallback(normalized, settings, providerHealth) {
   }
 
   const details = await hydrateCandidate(decision.candidate, settings, normalized);
+  const finalDetails = await applySynopsisPipeline(details, settings);
   return {
-    details: await applySynopsisPipeline(details, settings),
+    details: finalDetails,
     debug: {
       kind: "wikipedia",
       accepted: true,
       title: details.title,
       rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+      providerTrace: finalDetails.providerTrace || [],
     },
   };
 }
@@ -781,6 +894,7 @@ export async function lookupSynopsis(request) {
     detail: {
       resolvedCandidate: debugCandidateLabel(decision.candidate),
       rankedCandidates: ranked.slice(0, 5).map(debugCandidateLabel),
+      providerTrace: final.providerTrace || [],
     },
   });
 
@@ -849,4 +963,178 @@ export async function resolveAmbiguity(request) {
     status: "ok",
     result,
   };
+}
+
+export async function runGoodreadsVisualDebugTest() {
+  const settings = await getSettings();
+  const seed = pickRandomGoodreadsTestSeed();
+  const input = {
+    title: seed.title,
+    author: seed.author,
+    year: seed.year,
+    isbn13: seed.isbn13 || [],
+    isbn10: seed.isbn10 || [],
+    goodreadsIds: seed.goodreadsIds || [],
+  };
+
+  const fallback = await fetchGoodreadsFallback(input, settings, {
+    skipCache: true,
+    includeDebugAssets: true,
+  });
+
+  const eventBase = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    kind: "goodreads_test",
+    title: seed.title,
+    mediaType: "book",
+    year: seed.year,
+    author: seed.author,
+    status: fallback?.synopsisSource ? "success" : "error",
+    helperStatus: fallback?.status || "extraction_failed",
+    resolvedUrl: fallback?.resolvedUrl || "",
+    screenshotsCaptured: fallback?.screenshotsCaptured || 0,
+    previewScreenshot: fallback?.debug?.previewScreenshot || "",
+    visualLlmOutput: fallback?.debug?.rawOutput || "",
+    visualLlmModel: fallback?.debug?.model || "",
+    providerSourceText: String(fallback?.synopsisSource || ""),
+    helperDebug: Object.fromEntries(
+      Object.entries(fallback?.debug || {}).filter(([key]) => key !== "previewScreenshot" && key !== "rawOutput"),
+    ),
+  };
+
+  if (!fallback?.synopsisSource) {
+    await appendLookupDebugEvent({
+      status: "error",
+      query: seed.title,
+      lookupMode: "goodreads_test",
+      normalizedQuery: {
+        raw: seed.title,
+        query: seed.title,
+        hintType: "book",
+        hintYear: seed.year,
+      },
+      providerHealth: {
+        openlibrary: "skipped_forced_goodreads",
+        tmdb: "skipped",
+        wikipedia: "skipped",
+      },
+      primaryCandidateCount: 0,
+      chosenTitle: "",
+      detail: {
+        kind: "goodreads_visual_test",
+        providerTrace: [
+          {
+            step: "goodreads_visual_fallback",
+            status: fallback?.status || "extraction_failed",
+            resolvedUrl: fallback?.resolvedUrl,
+            screenshotsCaptured: fallback?.screenshotsCaptured || 0,
+            detail: fallback?.debug || {},
+          },
+        ],
+      },
+    });
+
+    await appendDebugEvent({
+      ...eventBase,
+      error: fallback?.debug?.reason || "Goodreads visual test failed.",
+      synopsisLlmOutput: "",
+      synopsisRequest: {},
+      finalSynopsis: "",
+      finalGenres: [],
+    });
+
+    return {
+      status: "error",
+      message: fallback?.debug?.reason || "Goodreads visual test failed.",
+      title: seed.title,
+    };
+  }
+
+  const llmSourceText = trimToWordLimit(String(fallback.synopsisSource || "").trim(), LLM_SOURCE_TEXT_MAX_WORDS);
+
+  try {
+    const rewritten = await rewriteSynopsisWithOpenRouter(
+      {
+        title: seed.title,
+        mediaType: "book",
+        year: seed.year,
+        author: seed.author,
+        directorOrCreator: undefined,
+        cast: [],
+        rawSourceText: fallback.synopsisSource,
+        synopsis: llmSourceText,
+      },
+      settings,
+      {
+        skipDebugEvent: true,
+        includeDebugData: true,
+      },
+    );
+
+    await appendLookupDebugEvent({
+      status: "ok",
+      query: seed.title,
+      lookupMode: "goodreads_test",
+      normalizedQuery: {
+        raw: seed.title,
+        query: seed.title,
+        hintType: "book",
+        hintYear: seed.year,
+      },
+      providerHealth: {
+        openlibrary: "skipped_forced_goodreads",
+        tmdb: "skipped",
+        wikipedia: "skipped",
+      },
+      primaryCandidateCount: 0,
+      chosenTitle: seed.title,
+      detail: {
+        kind: "goodreads_visual_test",
+        providerTrace: [
+          {
+            step: "goodreads_visual_fallback",
+            status: "ok",
+            resolvedUrl: fallback.resolvedUrl,
+            screenshotsCaptured: fallback.screenshotsCaptured || 0,
+          },
+          {
+            step: "llm_rewrite",
+            status: "ok",
+          },
+        ],
+      },
+    });
+
+    await appendDebugEvent({
+      ...eventBase,
+      status: "success",
+      synopsisRequest: rewritten?.debug?.requestPayload || {},
+      synopsisLlmOutput: rewritten?.debug?.rawOutput || "",
+      finalSynopsis: rewritten?.synopsis || "",
+      finalGenres: rewritten?.predictedGenres || [],
+    });
+
+    return {
+      status: "ok",
+      title: seed.title,
+      synopsis: rewritten?.synopsis || "",
+    };
+  } catch (error) {
+    await appendDebugEvent({
+      ...eventBase,
+      status: "error",
+      error: error?.message || "Synopsis rewrite failed.",
+      synopsisRequest: {},
+      synopsisLlmOutput: "",
+      finalSynopsis: "",
+      finalGenres: [],
+    });
+
+    return {
+      status: "error",
+      title: seed.title,
+      message: error?.message || "Synopsis rewrite failed.",
+    };
+  }
 }

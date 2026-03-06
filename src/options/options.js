@@ -18,6 +18,8 @@ const els = {
   llmEnabled: document.getElementById("llmEnabled"),
   llmPreferred: document.getElementById("llmPreferred"),
   localOnlyMode: document.getElementById("localOnlyMode"),
+  goodreadsVisualFallbackEnabled: document.getElementById("goodreadsVisualFallbackEnabled"),
+  goodreadsHelperUrl: document.getElementById("goodreadsHelperUrl"),
   providerOpenLibrary: document.getElementById("providerOpenLibrary"),
   providerTmdb: document.getElementById("providerTmdb"),
   providerWikipedia: document.getElementById("providerWikipedia"),
@@ -74,6 +76,16 @@ function renderSummary() {
     messages.push("TMDB is enabled but has no API key, so movie and TV matching may be weaker.");
   }
 
+  if (els.goodreadsVisualFallbackEnabled.checked) {
+    if (openrouterMissing) {
+      messages.push("Goodreads visual fallback is on, but it still needs your OpenRouter key to read the page screenshots.");
+    } else {
+      messages.push(`Goodreads visual fallback is ready at ${els.goodreadsHelperUrl.value.trim() || DEFAULT_SETTINGS.goodreadsHelperUrl}.`);
+    }
+  } else {
+    messages.push("Goodreads visual fallback is off, so books without Open Library descriptions will stop earlier.");
+  }
+
   if (els.localOnlyMode.checked) {
     messages.push("Local-only mode is on, so uncached lookups will fail until you turn it back off.");
   }
@@ -102,6 +114,8 @@ async function loadSettings() {
   els.llmEnabled.checked = settings.llmEnabled;
   els.llmPreferred.checked = settings.llmPreferred;
   els.localOnlyMode.checked = settings.localOnlyMode;
+  els.goodreadsVisualFallbackEnabled.checked = settings.goodreadsVisualFallbackEnabled;
+  els.goodreadsHelperUrl.value = settings.goodreadsHelperUrl || DEFAULT_SETTINGS.goodreadsHelperUrl;
   els.providerOpenLibrary.checked = settings.providerToggles.openlibrary;
   els.providerTmdb.checked = settings.providerToggles.tmdb;
   els.providerWikipedia.checked = settings.providerToggles.wikipedia;
@@ -118,6 +132,8 @@ function collectSettings() {
     llmEnabled: els.llmEnabled.checked,
     llmPreferred: els.llmPreferred.checked,
     localOnlyMode: els.localOnlyMode.checked,
+    goodreadsVisualFallbackEnabled: els.goodreadsVisualFallbackEnabled.checked,
+    goodreadsHelperUrl: els.goodreadsHelperUrl.value.trim() || DEFAULT_SETTINGS.goodreadsHelperUrl,
     providerToggles: {
       openlibrary: els.providerOpenLibrary.checked,
       tmdb: els.providerTmdb.checked,
@@ -165,6 +181,8 @@ els.resetShortcutBtn.addEventListener("click", () => {
   els.llmEnabled,
   els.llmPreferred,
   els.localOnlyMode,
+  els.goodreadsVisualFallbackEnabled,
+  els.goodreadsHelperUrl,
   els.providerOpenLibrary,
   els.providerTmdb,
   els.providerWikipedia,

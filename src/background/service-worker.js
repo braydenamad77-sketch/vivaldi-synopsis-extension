@@ -4,7 +4,7 @@ import {
   MENU_LOOKUP_MANUAL,
   MENU_LOOKUP_SELECTION,
 } from "../config/constants.js";
-import { lookupSynopsis, requestAlternatives, resolveAmbiguity } from "./router.js";
+import { lookupSynopsis, requestAlternatives, resolveAmbiguity, runGoodreadsVisualDebugTest } from "./router.js";
 
 const DEBUG_LOGS = false;
 
@@ -330,6 +330,19 @@ if (chrome?.runtime?.onMessage?.addListener) {
         }
       });
 
+      return true;
+    }
+
+    if (message?.type === "RUN_GOODREADS_VISUAL_TEST") {
+      runGoodreadsVisualDebugTest()
+        .then((response) => sendResponse(response))
+        .catch((error) =>
+          sendResponse({
+            status: "error",
+            errorCode: "GOODREADS_TEST_FAILED",
+            message: error?.message || "Could not run Goodreads debug test.",
+          }),
+        );
       return true;
     }
 

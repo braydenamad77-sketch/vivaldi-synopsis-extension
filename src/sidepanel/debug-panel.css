@@ -35,6 +35,11 @@ body {
   gap: 12px;
 }
 
+.topbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .eyebrow {
   margin: 0;
   font-size: 11px;
@@ -151,4 +156,13 @@ button.ghost {
   border-radius: 14px;
   border: 1px dashed rgba(196, 178, 153, 0.24);
   color: var(--muted);
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border-radius: 12px;
+  border: 1px solid rgba(174, 160, 138, 0.16);
+  background: rgba(0, 0, 0, 0.16);
 }
