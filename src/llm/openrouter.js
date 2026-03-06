@@ -1,4 +1,5 @@
 import { LLM_TIMEOUT_MS } from "../config/constants.js";
+import { appendDebugEvent, getDebugState } from "../debug/store.js";
 
 function buildPrompt({ title, mediaType, year, author, directorOrCreator, cast, synopsis }) {
   const isBook = mediaType === "book";
@@ -151,6 +152,24 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  let debugCaptured = false;
+  const prompt = buildPrompt(input);
+  const requestPayload = {
+    model: settings.openrouterModel,
+    temperature: isBook ? 0.3 : 0.2,
+    max_tokens: isBook ? 280 : 220,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a careful media assistant. Respond with valid JSON only, with non-spoiler synopsis text plus broad audience-friendly genre labels. For books, favor compelling jacket-copy style hooks without spoilers.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  };
 
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -160,36 +179,74 @@ export async function rewriteSynopsisWithOpenRouter(input, settings) {
         "Content-Type": "application/json",
         Authorization: `Bearer ${settings.openrouterApiKey}`,
       },
-      body: JSON.stringify({
-        model: settings.openrouterModel,
-        temperature: isBook ? 0.3 : 0.2,
-        max_tokens: isBook ? 280 : 220,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a careful media assistant. Respond with valid JSON only, with non-spoiler synopsis text plus broad audience-friendly genre labels. For books, favor compelling jacket-copy style hooks without spoilers.",
-          },
-          {
-            role: "user",
-            content: buildPrompt(input),
-          },
-        ],
-      }),
+      body: JSON.stringify(requestPayload),
     });
 
     if (!response.ok) {
+      await captureDebugEvent({
+        input,
+        requestPayload,
+        rawOutput: "",
+        status: "error",
+        error: `OpenRouter request failed: ${response.status}`,
+      });
+      debugCaptured = true;
       throw new Error(`OpenRouter request failed: ${response.status}`);
     }
 
     const data = await response.json();
     const content = data?.choices?.[0]?.message?.content?.trim();
     if (!content) {
+      await captureDebugEvent({
+        input,
+        requestPayload,
+        rawOutput: "",
+        status: "error",
+        error: "OpenRouter returned empty response",
+      });
+      debugCaptured = true;
       throw new Error("OpenRouter returned empty response");
     }
 
+    await captureDebugEvent({
+      input,
+      requestPayload,
+      rawOutput: content,
+      status: "success",
+    });
+    debugCaptured = true;
+
     return parseOpenRouterOutput(content);
+  } catch (error) {
+    const message = error?.message || String(error);
+    if (!debugCaptured) {
+      await captureDebugEvent({
+        input,
+        requestPayload,
+        rawOutput: "",
+        status: "error",
+        error: message,
+      });
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function captureDebugEvent({ input, requestPayload, rawOutput, status, error }) {
+  const debugState = await getDebugState();
+  if (!debugState.enabled) return;
+
+  await appendDebugEvent({
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    createdAt: new Date().toISOString(),
+    status,
+    error: error || "",
+    title: input?.title || "Unknown",
+    mediaType: input?.mediaType || "unknown",
+    year: input?.year,
+    request: requestPayload,
+    rawOutput: rawOutput || "",
+  });
 }

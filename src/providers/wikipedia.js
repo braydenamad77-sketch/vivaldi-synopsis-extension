@@ -20,6 +20,16 @@ async function fetchJson(url, timeoutMs = REQUEST_TIMEOUT_MS) {
   }
 }
 
+export function extractWikipediaArtwork(summary) {
+  const artworkUrl = summary?.originalimage?.source || summary?.thumbnail?.source;
+  if (!artworkUrl) return undefined;
+
+  return {
+    artworkUrl,
+    artworkKind: "thumbnail",
+  };
+}
+
 export async function fetchWikipediaSummary(queryText) {
   const query = encodeURIComponent(queryText);
   if (!query) return undefined;
@@ -32,11 +42,14 @@ export async function fetchWikipediaSummary(queryText) {
 
   const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`;
   const summary = await fetchJson(summaryUrl);
+  const artwork = extractWikipediaArtwork(summary);
 
   return {
     provider: "wikipedia",
     title: summary.title || title,
     synopsisSource: summary.extract || "",
+    artworkUrl: artwork?.artworkUrl,
+    artworkKind: artwork?.artworkKind,
     sourceAttribution: "Wikipedia",
   };
 }

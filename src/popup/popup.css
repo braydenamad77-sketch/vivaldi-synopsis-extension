@@ -56,6 +56,35 @@ h1 {
     linear-gradient(173deg, var(--panel-a), var(--panel-b));
 }
 
+.debug-toggle {
+  margin-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.14);
+  color: var(--text);
+}
+
+.debug-toggle input {
+  margin-top: 2px;
+  accent-color: #afc1e5;
+}
+
+.debug-toggle strong,
+.debug-toggle small {
+  display: block;
+}
+
+.debug-toggle small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .label {
   margin: 0;
   font-size: 11px;

@@ -72,7 +72,11 @@ export function normalizeTitleForCompare(value) {
 }
 
 export function buildCacheKey(normalizedQuery) {
-  return `cache:v2:${hashString(normalizedQuery.query || normalizedQuery.raw || "")}`;
+  const query = String(normalizedQuery?.query || normalizedQuery?.raw || "").trim();
+  const hintYear = normalizedQuery?.hintYear ? String(normalizedQuery.hintYear) : "";
+  const hintType = String(normalizedQuery?.hintType || "").trim();
+
+  return `cache:v3:${hashString(JSON.stringify({ query, hintYear, hintType }))}`;
 }
 
 export function hashString(value) {

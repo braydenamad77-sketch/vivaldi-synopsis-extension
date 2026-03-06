@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis Debug</title>
+    <link rel="stylesheet" href="debug-panel.css" />
+  </head>
+  <body>
+    <main class="panel">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Debug</p>
+          <h1>LLM Trace</h1>
+        </div>
+        <button id="clearBtn" type="button" class="ghost">Clear</button>
+      </header>
+
+      <p id="stateText" class="sub">Debug mode is off.</p>
+      <section id="events" class="events" aria-live="polite"></section>
+    </main>
+
+    <script type="module" src="debug-panel.js"></script>
+  </body>
+</html>

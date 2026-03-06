@@ -3,10 +3,11 @@
   "name": "Vivaldi Synopsis",
   "description": "Highlight a title and get a concise non-spoiler synopsis with metadata.",
   "version": "0.1.0",
-  "permissions": ["contextMenus", "storage", "activeTab", "scripting"],
+  "permissions": ["contextMenus", "storage", "activeTab", "scripting", "sidePanel"],
   "host_permissions": [
     "https://openlibrary.org/*",
     "https://api.themoviedb.org/*",
+    "https://api.tvmaze.com/*",
     "https://en.wikipedia.org/*",
     "https://www.goodreads.com/*",
     "https://openrouter.ai/*"
@@ -14,6 +15,9 @@
   "background": {
     "service_worker": "src/background/service-worker.js",
     "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/debug-panel.html"
   },
   "icons": {
     "16": "assets/icons/icon-16.png",

@@ -11,6 +11,7 @@ import { getCache, setCache } from "../core/cache.js";
 import { sanitizeSynopsis, safeTemplate } from "../core/spoiler-guard.js";
 import { searchOpenLibrary, fetchOpenLibraryDetails } from "../providers/openlibrary.js";
 import { searchTmdb, fetchTmdbDetails } from "../providers/tmdb.js";
+import { fetchTvmazeArtwork } from "../providers/tvmaze.js";
 import { fetchWikipediaSummary } from "../providers/wikipedia.js";
 import { fetchGoodreadsFallback } from "../providers/goodreads.js";
 import { rewriteSynopsisWithOpenRouter } from "../llm/openrouter.js";
@@ -123,6 +124,19 @@ function buildNotFoundResponse(normalized, providerHealth) {
 
 function buildLookupQuery(normalized) {
   return String(normalized.query || normalized.raw || "").trim();
+}
+
+function appendSourceAttribution(current, next) {
+  const values = [current, next]
+    .flatMap((part) => String(part || "").split("+"))
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const deduped = [];
+  for (const value of values) {
+    if (!deduped.includes(value)) deduped.push(value);
+  }
+  return deduped.join(" + ");
 }
 
 function trimPendingAmbiguities(limit = MAX_PENDING_AMBIGUITIES) {
@@ -244,7 +258,7 @@ async function hydrateCandidate(candidate, settings, normalized) {
 
     if (fallback?.synopsisSource) {
       details.synopsisSource = fallback.synopsisSource;
-      details.sourceAttribution = `${details.sourceAttribution} + ${fallback.sourceAttribution}`;
+      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, fallback.sourceAttribution);
       if (!details.author && fallback.author) details.author = fallback.author;
       if (!details.year && fallback.year) details.year = fallback.year;
       if ((!Array.isArray(details.genres) || !details.genres.length) && Array.isArray(fallback.genres)) {
@@ -253,11 +267,29 @@ async function hydrateCandidate(candidate, settings, normalized) {
     }
   }
 
-  if (!details.synopsisSource && details.mediaType !== "book" && settings.providerToggles.wikipedia) {
+  if (details.mediaType === "tv" && !details.artworkUrl) {
+    const tvmaze = await fetchTvmazeArtwork({
+      title: details.title || candidate.title || normalized.query,
+      year: details.year || candidate.year,
+    }).catch(() => undefined);
+
+    if (tvmaze?.artworkUrl) {
+      details.artworkUrl = tvmaze.artworkUrl;
+      details.artworkKind = tvmaze.artworkKind || "poster";
+      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, tvmaze.sourceAttribution);
+    }
+  }
+
+  if (details.mediaType !== "book" && settings.providerToggles.wikipedia && (!details.synopsisSource || !details.artworkUrl)) {
     const wiki = await fetchWikipediaSummary(details.title || normalized.query);
-    if (wiki?.synopsisSource) {
+    if (wiki?.synopsisSource && !details.synopsisSource) {
       details.synopsisSource = wiki.synopsisSource;
-      details.sourceAttribution = `${details.sourceAttribution} + ${wiki.sourceAttribution}`;
+      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
+    }
+    if (wiki?.artworkUrl && !details.artworkUrl) {
+      details.artworkUrl = wiki.artworkUrl;
+      details.artworkKind = wiki.artworkKind || "thumbnail";
+      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
     }
   }
 
@@ -367,8 +399,8 @@ async function lookupFallback(normalized, settings) {
     author: undefined,
     directorOrCreator: undefined,
     cast: [],
-    artworkUrl: undefined,
-    artworkKind: "placeholder",
+    artworkUrl: wiki.artworkUrl,
+    artworkKind: wiki.artworkKind || "placeholder",
   };
 
   return applySynopsisPipeline(details, settings);

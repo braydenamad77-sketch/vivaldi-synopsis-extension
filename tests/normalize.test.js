@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { normalizeQuery, detectHintType, hashString } from "../src/core/normalize.js";
+import { buildCacheKey, normalizeQuery, detectHintType, hashString } from "../src/core/normalize.js";
 
 test("normalizeQuery extracts year and strips it from query", () => {
   const normalized = normalizeQuery("Dune (2021) movie");
@@ -26,4 +26,18 @@ test("detectHintType identifies media hints", () => {
 test("hashString is deterministic", () => {
   assert.equal(hashString("dune"), hashString("dune"));
   assert.notEqual(hashString("dune"), hashString("dunes"));
+});
+
+test("buildCacheKey separates same title when year hints differ", () => {
+  const dune1984 = normalizeQuery("Dune (1984) movie");
+  const dune2021 = normalizeQuery("Dune (2021) movie");
+
+  assert.notEqual(buildCacheKey(dune1984), buildCacheKey(dune2021));
+});
+
+test("buildCacheKey separates same title when media hints differ", () => {
+  const atlasBook = normalizeQuery("Atlas book");
+  const atlasMovie = normalizeQuery("Atlas movie");
+
+  assert.notEqual(buildCacheKey(atlasBook), buildCacheKey(atlasMovie));
 });

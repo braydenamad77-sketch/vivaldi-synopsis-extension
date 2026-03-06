@@ -182,12 +182,13 @@
 
   function positionCard(card, anchorPos) {
     const rect = card.getBoundingClientRect();
-    const rawPos = anchorPos || getSelectionPosition();
+    const rawPos = anchorPos || card.__vsAnchorPos || getSelectionPosition();
     const clamped = clampToViewport(rawPos, rect);
 
     card.style.top = `${clamped.top}px`;
     card.style.left = `${clamped.left}px`;
     card.style.visibility = "visible";
+    card.__vsAnchorPos = clamped;
   }
 
   function mountCard(card, options = {}) {
@@ -363,16 +364,18 @@
     image.addEventListener("load", () => {
       const card = image.closest(`#${CARD_ID}`);
       if (!card) return;
+      const anchor = readCardAnchor(card);
       applyHybridPanelHeight(card);
-      positionCard(card);
+      positionCard(card, anchor);
     });
     image.addEventListener("error", () => {
       container.textContent = "";
       container.appendChild(renderPlaceholderPane(result));
       const card = container.closest(`#${CARD_ID}`);
       if (!card) return;
+      const anchor = readCardAnchor(card);
       applyHybridPanelHeight(card);
-      positionCard(card);
+      positionCard(card, anchor);
     });
 
     container.appendChild(image);
