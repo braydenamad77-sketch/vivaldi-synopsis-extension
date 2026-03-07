@@ -23,31 +23,55 @@ function formatTime(value) {
 
 function resultRowThumb(entry) {
   if (entry.artworkUrl) {
-    return `<img class="result-thumb" src="${entry.artworkUrl}" alt="" />`;
+    const image = document.createElement("img");
+    image.className = "result-thumb";
+    image.src = entry.artworkUrl;
+    image.alt = "";
+    return image;
   }
-  return `<div class="result-thumb placeholder">${entry.mediaType || "media"}</div>`;
+  const placeholder = document.createElement("div");
+  placeholder.className = "result-thumb placeholder";
+  placeholder.textContent = entry.mediaType || "media";
+  return placeholder;
+}
+
+function createResultRow(entry) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `result-row ${entry.cacheKey === activeCacheKey ? "active" : ""}`.trim();
+  button.dataset.cacheKey = entry.cacheKey;
+
+  button.appendChild(resultRowThumb(entry));
+
+  const textWrap = document.createElement("div");
+
+  const title = document.createElement("p");
+  title.className = "result-title";
+  title.textContent = entry.title || "Untitled";
+
+  const meta = document.createElement("p");
+  meta.className = "result-meta";
+  meta.textContent = [entry.mediaType, entry.year].filter(Boolean).join(" • ");
+
+  const source = document.createElement("p");
+  source.className = "result-source";
+  source.textContent = [entry.sourceAttribution, formatTime(entry.updatedAt)].filter(Boolean).join(" • ");
+
+  textWrap.append(title, meta, source);
+  button.appendChild(textWrap);
+  return button;
 }
 
 function renderList() {
   if (!rows.length) {
-    els.resultsList.innerHTML = `<div class="empty-state">No cached results yet. Run lookups in the extension and they will appear here.</div>`;
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No cached results yet. Run lookups in the extension and they will appear here.";
+    els.resultsList.replaceChildren(empty);
     return;
   }
 
-  els.resultsList.innerHTML = rows
-    .map(
-      (entry) => `
-        <button type="button" class="result-row ${entry.cacheKey === activeCacheKey ? "active" : ""}" data-cache-key="${entry.cacheKey}">
-          ${resultRowThumb(entry)}
-          <div>
-            <p class="result-title">${entry.title || "Untitled"}</p>
-            <p class="result-meta">${[entry.mediaType, entry.year].filter(Boolean).join(" • ")}</p>
-            <p class="result-source">${[entry.sourceAttribution, formatTime(entry.updatedAt)].filter(Boolean).join(" • ")}</p>
-          </div>
-        </button>
-      `,
-    )
-    .join("");
+  els.resultsList.replaceChildren(...rows.map((entry) => createResultRow(entry)));
 
   els.resultsList.querySelectorAll("[data-cache-key]").forEach((button) => {
     button.addEventListener("click", () => {

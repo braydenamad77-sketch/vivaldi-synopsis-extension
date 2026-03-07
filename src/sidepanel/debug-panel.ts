@@ -4,7 +4,11 @@ import type { DebugEvent, GoodreadsTestDebugEvent, LlmDebugEvent, LookupDebugEve
 import type { GoodreadsVisualTestResponse } from "../runtime/messages";
 
 function byId<T extends HTMLElement>(id: string) {
-  return document.getElementById(id) as T;
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Missing required sidepanel element: #${id}`);
+  }
+  return element as T;
 }
 
 const els = {

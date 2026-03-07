@@ -23,6 +23,10 @@ function swLog(...args: unknown[]) {
   console.log("[VS][SW]", ...args);
 }
 
+function hasTabId(tabId: number | null | undefined): tabId is number {
+  return typeof tabId === "number";
+}
+
 async function createContextMenu() {
   swLog("createContextMenu:start");
   chrome.contextMenus.removeAll(() => {
@@ -65,7 +69,7 @@ async function createContextMenu() {
 }
 
 function safeSendMessage(tabId: number, payload: ContentUiMessage) {
-  if (!tabId) return;
+  if (!hasTabId(tabId)) return;
   chrome.tabs.sendMessage(tabId, payload, () => {
     if (chrome.runtime?.lastError) {
       swLog("safeSendMessage:lastError", {
@@ -77,8 +81,19 @@ function safeSendMessage(tabId: number, payload: ContentUiMessage) {
   });
 }
 
+async function resolveTargetTabId(tab?: chrome.tabs.Tab): Promise<number | null> {
+  if (typeof tab?.id === "number") return tab.id;
+
+  const tabs = await chrome.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+
+  return typeof tabs?.[0]?.id === "number" ? tabs[0].id : null;
+}
+
 function sendMessageWithAck(tabId: number, payload: ContentUiMessage): Promise<boolean> {
-  if (!tabId) return Promise.resolve(false);
+  if (!hasTabId(tabId)) return Promise.resolve(false);
 
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, payload, (response?: ContentScriptAckResponse) => {
@@ -98,7 +113,7 @@ function sendMessageWithAck(tabId: number, payload: ContentUiMessage): Promise<b
 }
 
 async function injectUiAssets(tabId: number): Promise<boolean> {
-  if (!tabId) return false;
+  if (!hasTabId(tabId)) return false;
   if (!chrome.scripting?.insertCSS || !chrome.scripting?.executeScript) return false;
 
   try {
@@ -124,7 +139,7 @@ async function injectUiAssets(tabId: number): Promise<boolean> {
 }
 
 async function ensureUiAssets(tabId: number): Promise<boolean> {
-  if (!tabId) return false;
+  if (!hasTabId(tabId)) return false;
   let ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
   if (ready) return true;
 
@@ -145,7 +160,7 @@ async function ensureUiAssets(tabId: number): Promise<boolean> {
 }
 
 async function showManualSearchInput(tabId: number): Promise<boolean> {
-  if (!tabId) return false;
+  if (!hasTabId(tabId)) return false;
   swLog("showManualSearchInput:start", { tabId });
 
   const ready = await ensureUiAssets(tabId);
@@ -274,29 +289,31 @@ export function startBackground() {
 
   if (chrome?.contextMenus?.onClicked?.addListener) {
     chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+      const tabId = await resolveTargetTabId(tab);
       swLog("contextMenus:onClicked", {
         menuItemId: info?.menuItemId,
         hasSelectionText: Boolean(info?.selectionText),
         pageUrl: info?.pageUrl,
         tabId: tab?.id,
         tabUrl: tab?.url,
+        resolvedTabId: tabId,
       });
 
-      if (!tab?.id) return;
+      if (!hasTabId(tabId)) return;
 
       if (info.menuItemId === MENU_LOOKUP_SELECTION) {
         if (!info.selectionText) return;
-        const ready = await ensureUiAssets(tab.id);
+        const ready = await ensureUiAssets(tabId);
         if (!ready) {
-          swLog("contextMenus:onClicked:selection:uiNotReady", { tabId: tab.id });
+          swLog("contextMenus:onClicked:selection:uiNotReady", { tabId });
           return;
         }
-        await processLookup(info.selectionText, tab.id);
+        await processLookup(info.selectionText, tabId);
         return;
       }
 
       if (info.menuItemId === MENU_LOOKUP_MANUAL) {
-        await showManualSearchInput(tab.id);
+        await showManualSearchInput(tabId);
       }
     });
   }
@@ -313,7 +330,7 @@ export function startBackground() {
         const tabId = sender?.tab?.id;
         const query = String(message.query || "").trim();
 
-        if (!tabId || !query) {
+        if (!hasTabId(tabId) || !query) {
           sendResponse({
             status: "error",
             errorCode: "INVALID_QUERY",
@@ -351,7 +368,7 @@ export function startBackground() {
       if (message?.type === "OPEN_SEARCH_IN_ACTIVE_TAB") {
         chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
           const tabId = tabs?.[0]?.id;
-          if (!tabId) {
+          if (!hasTabId(tabId)) {
             sendResponse({
               status: "error",
               errorCode: "NO_ACTIVE_TAB",

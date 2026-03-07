@@ -1,10 +1,10 @@
 import { defineConfig } from "wxt";
 
 const iconSet = {
-  "16": "/icon-16.png",
-  "32": "/icon-32.png",
-  "48": "/icon-48.png",
-  "128": "/icon-128.png",
+  "16": "icon-16.png",
+  "32": "icon-32.png",
+  "48": "icon-48.png",
+  "128": "icon-128.png",
 } as const;
 
 export default defineConfig({
@@ -35,14 +35,14 @@ export default defineConfig({
     action: {
       default_title: "Vivaldi Synopsis",
       default_icon: {
-        "16": "/icon-16.png",
-        "32": "/icon-32.png",
-        "48": "/icon-48.png",
+        "16": "icon-16.png",
+        "32": "icon-32.png",
+        "48": "icon-48.png",
       },
     },
     web_accessible_resources: [
       {
-        resources: ["/icon-48.png"],
+        resources: ["icon-48.png"],
         matches: ["http://*/*", "https://*/*"],
       },
     ],

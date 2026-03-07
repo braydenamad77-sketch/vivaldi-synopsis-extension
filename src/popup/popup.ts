@@ -5,7 +5,11 @@ import type { ExtensionSettings } from "../types";
 import type { OpenSearchInActiveTabResponse } from "../runtime/messages";
 
 function byId<T extends HTMLElement>(id: string) {
-  return document.getElementById(id) as T;
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Missing required popup element: #${id}`);
+  }
+  return element as T;
 }
 
 const els = {
@@ -51,7 +55,10 @@ async function updateDebugMode(enabled: boolean) {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const windowId = tab?.windowId;
-  if (!windowId) return;
+  if (typeof windowId !== "number") {
+    setStatus("Could not determine the active browser window.", "error");
+    return;
+  }
 
   if (enabled) {
     if (chrome.sidePanel?.open) {

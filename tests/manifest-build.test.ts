@@ -3,10 +3,6 @@ import { readFile } from "node:fs/promises";
 
 import { test } from "vitest";
 
-function stripLeadingSlash(value: string) {
-  return value.replace(/^\//, "");
-}
-
 test("built manifest preserves current chrome mv3 contract", async () => {
   const manifestText = await readFile(".output/chrome-mv3/manifest.json", "utf8");
   const manifest = JSON.parse(manifestText) as {
@@ -61,35 +57,23 @@ test("built manifest preserves current chrome mv3 contract", async () => {
   assert.equal(manifest.options_ui?.page || manifest.options_page, "options.html");
   assert.equal(manifest.side_panel.default_path, "sidepanel.html");
   assert.equal(manifest.background.service_worker, "background.js");
-  assert.deepEqual(
-    Object.fromEntries(Object.entries(manifest.icons).map(([key, value]) => [key, stripLeadingSlash(String(value))])),
+  assert.deepEqual(manifest.icons, {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+    "128": "icon-128.png",
+  });
+  assert.deepEqual(manifest.action.default_icon, {
+    "16": "icon-16.png",
+    "32": "icon-32.png",
+    "48": "icon-48.png",
+  });
+  assert.deepEqual(manifest.web_accessible_resources, [
     {
-      "16": "icon-16.png",
-      "32": "icon-32.png",
-      "48": "icon-48.png",
-      "128": "icon-128.png",
+      matches: ["http://*/*", "https://*/*"],
+      resources: ["icon-48.png"],
     },
-  );
-  assert.deepEqual(
-    Object.fromEntries(Object.entries(manifest.action.default_icon).map(([key, value]) => [key, stripLeadingSlash(String(value))])),
-    {
-      "16": "icon-16.png",
-      "32": "icon-32.png",
-      "48": "icon-48.png",
-    },
-  );
-  assert.deepEqual(
-    manifest.web_accessible_resources.map((entry: { matches: string[]; resources: string[] }) => ({
-      ...entry,
-      resources: entry.resources.map((resource: string) => stripLeadingSlash(resource)),
-    })),
-    [
-      {
-        matches: ["http://*/*", "https://*/*"],
-        resources: ["icon-48.png"],
-      },
-    ],
-  );
+  ]);
   assert.deepEqual(manifest.content_scripts, [
     {
       matches: ["http://*/*", "https://*/*"],

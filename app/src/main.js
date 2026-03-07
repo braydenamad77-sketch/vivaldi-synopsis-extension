@@ -10,6 +10,7 @@ let mainWindow;
 let cacheDb;
 let goodreadsService;
 let httpServer;
+let shutdownPromise;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 async function createMainWindow() {
@@ -60,9 +61,27 @@ async function bootstrap() {
 }
 
 async function shutdown() {
-  await httpServer?.stop().catch(() => {});
-  await goodreadsService?.stop().catch(() => {});
-  cacheDb?.close?.();
+  if (shutdownPromise) return shutdownPromise;
+
+  shutdownPromise = (async () => {
+    const server = httpServer;
+    const service = goodreadsService;
+    const db = cacheDb;
+
+    httpServer = undefined;
+    goodreadsService = undefined;
+    cacheDb = undefined;
+
+    await server?.stop().catch(() => {});
+    await service?.stop().catch(() => {});
+    try {
+      db?.close?.();
+    } catch (_error) {
+      // Ignore already-closed database handles during repeated shutdown hooks.
+    }
+  })();
+
+  return shutdownPromise;
 }
 
 if (!hasSingleInstanceLock) {

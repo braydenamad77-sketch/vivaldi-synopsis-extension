@@ -9,7 +9,11 @@ import {
 import type { ExtensionSettings } from "../types";
 
 function byId<T extends HTMLElement>(id: string) {
-  return document.getElementById(id) as T;
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Missing required options element: #${id}`);
+  }
+  return element as T;
 }
 
 const els = {
@@ -119,7 +123,13 @@ function renderSummary() {
 
   messages.push(`Manual search shortcut: ${formatShortcutLabel(shortcutDraft)}.`);
 
-  els.settingsSummary.innerHTML = messages.map((message) => `<p>${message}</p>`).join("");
+  els.settingsSummary.replaceChildren(
+    ...messages.map((message) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = message;
+      return paragraph;
+    }),
+  );
 }
 
 function syncUiState() {
