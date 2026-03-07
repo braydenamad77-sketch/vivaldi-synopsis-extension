@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis Settings</title>
+  </head>
+  <body>
+    <main class="page">
+      <article class="panel">
+        <header class="masthead">
+          <div class="brand">
+            <img class="brand-mark" src="/icon-48.png" alt="" />
+            <div class="brand-copy">
+              <p class="brand-name">Vivaldi Synopsis</p>
+              <h1>Settings</h1>
+            </div>
+          </div>
+          <p class="sub">Configure providers, shortcuts, and fallback behavior in the exact same house style as the popup.</p>
+        </header>
+
+        <section class="section">
+          <p class="section-title">Setup notes</p>
+          <div id="settingsSummary" class="summary" role="status" aria-live="polite"></div>
+        </section>
+
+        <section class="section">
+          <p class="section-title">API keys</p>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">OpenRouter API key</span>
+              <input id="openrouterApiKey" type="password" autocomplete="off" />
+              <span class="note">This is the main path for synopsis writing. Provider text is only the fallback.</span>
+            </label>
+            <label class="field">
+              <span class="field-label">OpenRouter model</span>
+              <input id="openrouterModel" type="text" autocomplete="off" />
+              <span class="note">Leave this alone unless you already know you want a different OpenRouter model.</span>
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">TMDB API key</span>
+              <input id="tmdbApiKey" type="password" autocomplete="off" />
+              <span class="note">Needed for stronger movie and TV matching plus artwork.</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <p class="section-title">Manual search key</p>
+          <div class="shortcut-control">
+            <input id="searchShortcutKey" class="shortcut-input" type="text" readonly aria-describedby="shortcutHint" />
+            <button id="resetShortcutBtn" type="button" class="ghost small">Reset</button>
+          </div>
+          <p id="shortcutHint" class="note">Click the field, then press one key. Default: backslash. No modifier keys.</p>
+        </section>
+
+        <section class="section">
+          <p class="section-title">Behavior</p>
+          <div class="choice-group" role="radiogroup" aria-label="Result display mode">
+            <p class="group-label">Result display mode</p>
+            <div class="choice-grid">
+              <label class="choice">
+                <input id="resultUiModePanel" type="radio" name="resultUiMode" value="with_image" />
+                <span>With image panel</span>
+              </label>
+              <label class="choice">
+                <input id="resultUiModeCompact" type="radio" name="resultUiMode" value="without_image" />
+                <span>Without image</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="toggle-list">
+            <label class="toggle-row" for="editorialSynopsisPopupEnabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Use the new synopsis popup</span>
+                <span class="note">Switch between the new editorial result popup and the original legacy popup.</span>
+              </span>
+              <span class="switch">
+                <input id="editorialSynopsisPopupEnabled" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row" for="llmEnabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Enable AI synopsis writing</span>
+                <span class="note">Turn off AI output and rely on provider text only.</span>
+              </span>
+              <span class="switch">
+                <input id="llmEnabled" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row" for="llmPreferred">
+              <span class="toggle-copy">
+                <span class="toggle-title">Prefer AI when provider text exists</span>
+                <span class="note">Use AI first even when a provider already has a description.</span>
+              </span>
+              <span class="switch">
+                <input id="llmPreferred" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row" for="localOnlyMode">
+              <span class="toggle-copy">
+                <span class="toggle-title">Local-only mode</span>
+                <span class="note">Only return cached matches and stop all fresh lookups.</span>
+              </span>
+              <span class="switch">
+                <input id="localOnlyMode" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="section">
+          <p class="section-title">Goodreads visual fallback</p>
+          <label class="toggle-row" for="goodreadsVisualFallbackEnabled">
+            <span class="toggle-copy">
+              <span class="toggle-title">Enable Goodreads visual fallback for books</span>
+              <span class="note">Use the local helper to read screenshots when Open Library comes up short.</span>
+            </span>
+            <span class="switch">
+              <input id="goodreadsVisualFallbackEnabled" type="checkbox" />
+              <span class="switch-ui" aria-hidden="true"></span>
+            </span>
+          </label>
+
+          <label class="field field-spaced">
+            <span class="field-label">Local helper URL</span>
+            <input id="goodreadsHelperUrl" type="text" autocomplete="off" />
+            <span class="note">Default: http://127.0.0.1:4317. This must stay on localhost and uses your saved OpenRouter key to read Goodreads screenshots.</span>
+          </label>
+        </section>
+
+        <section class="section">
+          <p class="section-title">Providers</p>
+          <div class="toggle-list">
+            <label class="toggle-row" for="providerOpenLibrary">
+              <span class="toggle-copy">
+                <span class="toggle-title">Open Library</span>
+                <span class="note">Book metadata and descriptions.</span>
+              </span>
+              <span class="switch">
+                <input id="providerOpenLibrary" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row" for="providerTmdb">
+              <span class="toggle-copy">
+                <span class="toggle-title">TMDB</span>
+                <span class="note">Movie and TV matching plus artwork.</span>
+              </span>
+              <span class="switch">
+                <input id="providerTmdb" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+
+            <label class="toggle-row" for="providerWikipedia">
+              <span class="toggle-copy">
+                <span class="toggle-title">Wikipedia fallback</span>
+                <span class="note">Movie and TV only when stronger sources miss.</span>
+              </span>
+              <span class="switch">
+                <input id="providerWikipedia" type="checkbox" />
+                <span class="switch-ui" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button id="saveBtn" type="button">Save Settings</button>
+          <button id="clearCacheBtn" type="button" class="ghost">Delete Cached Data</button>
+        </div>
+
+        <p id="status" class="status" data-tone="empty" role="status" aria-live="polite"></p>
+      </article>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

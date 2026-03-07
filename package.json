@@ -4,9 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:extension": "node --test tests/*.test.js",
+    "dev": "wxt -b chrome",
+    "build": "wxt build -b chrome",
+    "zip": "wxt zip -b chrome",
+    "prepare": "wxt prepare",
+    "typecheck": "npm run prepare && tsc -p tsconfig.json --noEmit",
+    "test:extension": "npm run typecheck && vitest run --exclude tests/manifest-build.test.ts && npm run test:manifest",
+    "test:manifest": "npm run build && vitest run --config vitest.manifest.config.ts",
     "test:app": "npm --prefix app test",
     "test": "npm run test:extension && npm run test:app",
     "app:start": "npm --prefix app start"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.1.37",
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18",
+    "wxt": "^0.20.18"
   }
 }

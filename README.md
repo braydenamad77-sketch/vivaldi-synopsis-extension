@@ -1,6 +1,6 @@
 # Vivaldi Synopsis Extension (MVP)
 
-Manifest V3 Chromium extension for quick non-spoiler synopses from highlighted titles.
+WXT-powered MV3 Chromium extension for quick non-spoiler synopses from highlighted titles.
 
 ## Features
 
@@ -17,25 +17,34 @@ Manifest V3 Chromium extension for quick non-spoiler synopses from highlighted t
 
 ## Project structure
 
-- `manifest.json`
-- `src/background/` service worker + router
+- `wxt.config.ts`
+- `entrypoints/` WXT background, content script, popup, options, and sidepanel entrypoints
+- `src/background/` background logic + router
 - `src/providers/` Open Library, TMDB, Goodreads book fallback, Wikipedia fallback
 - `src/llm/` OpenRouter integration
 - `src/core/` normalize, disambiguate, spoiler guard, cache
 - `src/content/` inline card UI
-- `src/options/` settings page
+- `src/options/`, `src/popup/`, `src/sidepanel/` shared page logic and styles
+- `public/` extension icons copied into the final build
 - `tests/` unit tests for core logic
 
 ## Setup
 
-1. Open `chrome://extensions` or `vivaldi://extensions`
-2. Enable Developer Mode
-3. Click **Load unpacked** and select this project directory
+1. Install dependencies with `npm install`
+2. Copy `web-ext.config.example.ts` to `web-ext.config.ts` if you want to customize the local Vivaldi binary/profile path
+3. Run `npm run dev` for the WXT dev server and automatic extension reloads
 4. Open extension options page and set:
    - `OpenRouter API Key`
    - `OpenRouter Model` (default is pre-filled)
    - `TMDB API Key` (required for movie/TV metadata)
    - `Result Display Mode` (`With Image Panel` by default)
+
+## Development
+
+- `npm run dev` starts WXT against Chrome-family browsers. The included local `web-ext.config.ts` is set up for Vivaldi on macOS with the default profile directory.
+- `npm run build` creates a production extension in `.output/chrome-mv3`
+- `npm run zip` packages the built extension
+- `npm run test` runs Vitest for the extension, verifies the generated manifest, and then runs the Electron companion app tests
 
 ## Notes
 

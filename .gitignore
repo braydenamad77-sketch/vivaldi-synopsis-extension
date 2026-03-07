@@ -1,0 +1,6 @@
+node_modules/
+.output/
+.wxt/
+coverage/
+web-ext.config.ts
+.DS_Store

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Vivaldi Synopsis Debug</title>
+  </head>
+  <body>
+    <main class="panel">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Debug</p>
+          <h1>LLM Trace</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="goodreadsTestBtn" type="button" class="ghost">Goodreads Test</button>
+          <button id="clearBtn" type="button" class="ghost">Clear</button>
+        </div>
+      </header>
+
+      <p id="stateText" class="sub">Debug mode is off.</p>
+      <section id="events" class="events" aria-live="polite"></section>
+    </main>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
