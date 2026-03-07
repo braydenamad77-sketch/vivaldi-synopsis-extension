@@ -81,7 +81,9 @@ export interface StatusErrorResponse {
 export type StatusResponse = StatusOkResponse | StatusErrorResponse;
 
 export type OpenSearchInActiveTabResponse = StatusResponse;
-export type RunLookupQueryResponse = StatusResponse;
+export type RunLookupQueryResponse = (StatusOkResponse | StatusErrorResponse) & {
+  allowWideSearch?: boolean;
+};
 
 export type OpenGoogleSearchResponse =
   | {

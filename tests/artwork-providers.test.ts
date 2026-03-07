@@ -1,7 +1,7 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 
-import { pickTmdbArtwork } from "../src/providers/tmdb";
+import { pickTmdbArtwork, searchTmdb } from "../src/providers/tmdb";
 import { pickBestTvmazeCandidate } from "../src/providers/tvmaze";
 import { extractWikipediaArtwork } from "../src/providers/wikipedia";
 
@@ -50,4 +50,31 @@ test("extractWikipediaArtwork prefers original image source", () => {
   assert.ok(picked);
   assert.equal(picked.artworkUrl, "https://example.com/original.jpg");
   assert.equal(picked.artworkKind, "thumbnail");
+});
+
+test("searchTmdb keeps results beyond the old top-eight truncation", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      async json() {
+        return {
+          results: Array.from({ length: 10 }, (_value, index) => ({
+            id: index + 1,
+            media_type: "movie",
+            title: `Atlas ${index + 1}`,
+            popularity: 10 + index,
+            vote_count: 100 + index,
+          })),
+        };
+      },
+    }) as Response) as typeof fetch;
+
+  try {
+    const results = await searchTmdb({ query: "Atlas", raw: "Atlas" }, "tmdb-key");
+    assert.equal(results.length, 10);
+    assert.equal(results.at(-1)?.title, "Atlas 10");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

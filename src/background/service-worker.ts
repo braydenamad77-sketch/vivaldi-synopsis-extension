@@ -15,6 +15,8 @@ import type {
 
 const DEBUG_LOGS = false;
 let backgroundStarted = false;
+const CONTENT_SCRIPT_CSS_FILE = "content-scripts/synopsis.css";
+const CONTENT_SCRIPT_JS_FILE = "content-scripts/synopsis.js";
 
 function swLog(...args: unknown[]) {
   if (!DEBUG_LOGS) return;
@@ -95,6 +97,32 @@ function sendMessageWithAck(tabId: number, payload: ContentUiMessage): Promise<b
   });
 }
 
+async function injectUiAssets(tabId: number): Promise<boolean> {
+  if (!tabId) return false;
+  if (!chrome.scripting?.insertCSS || !chrome.scripting?.executeScript) return false;
+
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId },
+      files: [CONTENT_SCRIPT_CSS_FILE],
+    });
+
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: [CONTENT_SCRIPT_JS_FILE],
+    });
+
+    swLog("injectUiAssets:ok", { tabId });
+    return true;
+  } catch (error) {
+    swLog("injectUiAssets:failed", {
+      tabId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
 async function ensureUiAssets(tabId: number): Promise<boolean> {
   if (!tabId) return false;
   let ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
@@ -102,7 +130,17 @@ async function ensureUiAssets(tabId: number): Promise<boolean> {
 
   await new Promise((resolve) => setTimeout(resolve, 60));
   ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
-  swLog("ensureUiAssets:readyAfterRetry", { tabId, ready });
+  if (ready) {
+    swLog("ensureUiAssets:readyAfterRetry", { tabId, ready });
+    return true;
+  }
+
+  const injected = await injectUiAssets(tabId);
+  if (!injected) return false;
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
+  swLog("ensureUiAssets:readyAfterInject", { tabId, ready });
   return ready;
 }
 
@@ -123,12 +161,16 @@ async function showManualSearchInput(tabId: number): Promise<boolean> {
   // Retry once in case a page blocks/defers message handlers momentarily.
   delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
   swLog("showManualSearchInput:retryAck", { tabId, delivered });
-  if (!delivered) {
-    swLog("showManualSearchInput:fallbackSendWithoutAck", { tabId });
-    safeSendMessage(tabId, { type: "SHOW_SEARCH_INPUT" });
-  }
+  if (delivered) return true;
 
-  return true;
+  const reinjected = await injectUiAssets(tabId);
+  if (!reinjected) return false;
+
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  delivered = await sendMessageWithAck(tabId, { type: "SHOW_SEARCH_INPUT" });
+  swLog("showManualSearchInput:afterReinjectAck", { tabId, delivered });
+
+  return delivered;
 }
 
 async function processLookup(selectionText: string, tabId: number, options: { widerSearch?: boolean } = {}): Promise<void> {

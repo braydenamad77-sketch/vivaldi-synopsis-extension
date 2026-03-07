@@ -89,6 +89,36 @@ test("chooseWikipediaFallbackCandidate accepts a clean exact wikipedia title", (
   assert.equal(decision.candidate.title, "Heat");
 });
 
+test("chooseWikipediaFallbackCandidate accepts clarified wikipedia titles when they clearly match", () => {
+  const ranked = rankCandidates(
+    [
+      {
+        id: "wikipedia:It_(novel)",
+        provider: "wikipedia",
+        title: "It (novel)",
+        mediaType: "book",
+        wikiDescription: "1986 horror novel by Stephen King",
+      },
+      {
+        id: "wikipedia:It_(miniseries)",
+        provider: "wikipedia",
+        title: "It (miniseries)",
+        mediaType: "tv",
+        wikiDescription: "1990 television miniseries",
+      },
+    ],
+    { query: "it", hintType: "book" },
+  );
+
+  const decision = chooseWikipediaFallbackCandidate(ranked, { query: "it", hintType: "book" });
+
+  assert.equal(decision.status, "resolved");
+  if (decision.status !== "resolved") {
+    throw new Error("Expected clarified Wikipedia title to resolve");
+  }
+  assert.equal(decision.candidate.title, "It (novel)");
+});
+
 test("inferWikipediaMediaType recognizes books, TV, and movies from descriptions", () => {
   assert.equal(inferWikipediaMediaType("2015 novel by Example Author"), "book");
   assert.equal(inferWikipediaMediaType("American television series"), "tv");

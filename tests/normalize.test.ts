@@ -17,6 +17,20 @@ test("normalizeQuery strips trailing context noise from highlighted video titles
   assert.equal(normalized.query, "Set It Up");
 });
 
+test("normalizeQuery keeps year-only titles intact", () => {
+  const normalized = normalizeQuery("1917");
+
+  assert.equal(normalized.query, "1917");
+  assert.equal(normalized.hintYear, undefined);
+});
+
+test("normalizeQuery keeps year titles when the remainder is only a media hint", () => {
+  const normalized = normalizeQuery("1984 book");
+
+  assert.equal(normalized.query, "1984 book");
+  assert.equal(normalized.hintYear, undefined);
+});
+
 test("detectHintType identifies media hints", () => {
   assert.equal(detectHintType("best sci fi book"), "book");
   assert.equal(detectHintType("classic tv show"), "tv");

@@ -1222,7 +1222,7 @@ export function startSynopsisContentScript() {
       showError(response.message || "Lookup failed.", {
         errorCode: response.errorCode,
         lookupQuery: query,
-        allowWideSearch: Boolean(options.widerSearch),
+        allowWideSearch: Boolean(response.allowWideSearch ?? options.widerSearch),
       });
     }
   }

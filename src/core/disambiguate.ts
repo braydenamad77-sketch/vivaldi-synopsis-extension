@@ -89,6 +89,27 @@ function dedupeKeyForBook(candidate: Candidate) {
   return `${titleKey}::${authorKey}::${yearBucket}`;
 }
 
+function mergeStringArrays(primary: string[] | undefined, secondary: string[] | undefined, limit = 6) {
+  const merged: string[] = [];
+  for (const value of [...(primary || []), ...(secondary || [])]) {
+    const normalized = String(value || "").trim();
+    if (!normalized || merged.includes(normalized)) continue;
+    merged.push(normalized);
+    if (merged.length >= limit) break;
+  }
+  return merged;
+}
+
+function openLibraryCandidateScore(candidate: Candidate) {
+  return (
+    (candidate.artworkUrl ? 4 : 0) +
+    (candidate.goodreadsIds?.length || 0) +
+    (candidate.isbn10?.length || 0) +
+    (candidate.isbn13?.length || 0) +
+    (String(candidate.id || "").startsWith("/works/") ? 1 : 0)
+  );
+}
+
 export function collapseBookCandidates(candidates: Candidate[]): Candidate[] {
   const seen = new Map<string, Candidate>();
   const result: Candidate[] = [];
@@ -109,10 +130,24 @@ export function collapseBookCandidates(candidates: Candidate[]): Candidate[] {
     }
 
     const existingIndex = result.indexOf(existing);
-    const shouldReplace = Boolean(candidate.artworkUrl) && !existing.artworkUrl;
-    if (shouldReplace && existingIndex >= 0) {
-      result[existingIndex] = candidate;
-      seen.set(key, candidate);
+    const primary = openLibraryCandidateScore(candidate) > openLibraryCandidateScore(existing) ? candidate : existing;
+    const secondary = primary === candidate ? existing : candidate;
+    const merged: Candidate = {
+      ...primary,
+      title: primary.title || secondary.title,
+      year: primary.year ?? secondary.year,
+      authorOrDirector: primary.authorOrDirector || secondary.authorOrDirector,
+      coverId: primary.coverId ?? secondary.coverId,
+      artworkUrl: primary.artworkUrl || secondary.artworkUrl,
+      artworkKind: primary.artworkKind || secondary.artworkKind,
+      goodreadsIds: mergeStringArrays(primary.goodreadsIds, secondary.goodreadsIds, 6),
+      isbn10: mergeStringArrays(primary.isbn10, secondary.isbn10, 6),
+      isbn13: mergeStringArrays(primary.isbn13, secondary.isbn13, 6),
+    };
+
+    if (existingIndex >= 0) {
+      result[existingIndex] = merged;
+      seen.set(key, merged);
     }
   }
 

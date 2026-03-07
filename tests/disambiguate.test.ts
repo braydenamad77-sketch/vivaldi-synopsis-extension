@@ -55,6 +55,36 @@ test("collapseBookCandidates merges near-identical Open Library editions", () =>
   assert.equal(collapsed.length, 3);
   assert.equal(collapsed.some((item) => item.id === "b2"), true);
   assert.equal(collapsed.some((item) => item.id === "b1"), false);
+  const mergedBook = collapsed.find((item) => item.id === "b2");
+  assert.deepEqual(mergedBook?.goodreadsIds || [], []);
+});
+
+test("collapseBookCandidates preserves identifiers from duplicate Open Library rows", () => {
+  const collapsed = collapseBookCandidates([
+    {
+      id: "b1",
+      provider: "openlibrary",
+      title: "Atlas",
+      mediaType: "book",
+      year: 2018,
+      authorOrDirector: "Example Author",
+      goodreadsIds: ["111"],
+    },
+    {
+      id: "b2",
+      provider: "openlibrary",
+      title: "Atlas",
+      mediaType: "book",
+      year: 2018,
+      authorOrDirector: "Example Author",
+      artworkUrl: "https://covers.openlibrary.org/b/id/123-L.jpg",
+      isbn13: ["9781234567890"],
+    },
+  ]);
+
+  assert.equal(collapsed.length, 1);
+  assert.deepEqual(collapsed[0].goodreadsIds, ["111"]);
+  assert.deepEqual(collapsed[0].isbn13, ["9781234567890"]);
 });
 
 test("chooseCandidate includes both audiovisual and book options when mixed", () => {

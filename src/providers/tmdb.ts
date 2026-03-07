@@ -4,6 +4,7 @@ import type { AnyRecord, Candidate, NormalizedQuery } from "../types";
 const TMDB_BASE = "https://api.themoviedb.org/3";
 const TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500";
 const TMDB_BACKDROP_IMAGE_BASE = "https://image.tmdb.org/t/p/w780";
+const TMDB_SEARCH_RESULT_LIMIT = 20;
 
 async function fetchJson(url: string, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -128,7 +129,7 @@ export async function searchTmdb(normalizedQuery: NormalizedQuery, apiKey: strin
 
   return (data.results || [])
     .filter((item: AnyRecord) => item.media_type === "movie" || item.media_type === "tv")
-    .slice(0, 8)
+    .slice(0, TMDB_SEARCH_RESULT_LIMIT)
     .map((item: AnyRecord) => ({
       id: `tmdb:${item.media_type}:${item.id}`,
       provider: "tmdb",

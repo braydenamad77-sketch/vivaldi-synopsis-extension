@@ -267,7 +267,7 @@ export async function rewriteSynopsisWithOpenRouter(
         });
       }
     }
-    throw error;
+    throw new Error(message);
   } finally {
     clearTimeout(timeout);
   }

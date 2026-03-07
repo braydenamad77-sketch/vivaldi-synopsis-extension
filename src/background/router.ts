@@ -152,6 +152,10 @@ function buildLookupQuery(normalized: NormalizedQuery) {
   return String(normalized.query || normalized.raw || "").trim();
 }
 
+function canTryBookFallback(normalized: NormalizedQuery) {
+  return normalized.hintType !== "movie" && normalized.hintType !== "tv";
+}
+
 function debugCandidateLabel(candidate: Candidate | undefined) {
   if (!candidate) return "";
   return [candidate.title, candidate.mediaType, candidate.year, candidate.provider].filter(Boolean).join(" | ");
@@ -203,7 +207,20 @@ export function chooseWikipediaFallbackCandidate(
     };
   }
 
-  if (normalizedQuery && normalizedTitle === normalizedQuery && topScore >= 1) {
+  const exactMatch = normalizedQuery && normalizedTitle === normalizedQuery;
+  const clarifiedMatch =
+    normalizedQuery &&
+    (normalizedTitle.startsWith(`${normalizedQuery} `) || normalizedQuery.startsWith(`${normalizedTitle} `));
+
+  if (exactMatch && topScore >= 1) {
+    return {
+      status: "resolved",
+      candidate: top,
+      gap,
+    };
+  }
+
+  if (clarifiedMatch && topScore >= 0.3 && gap >= 0.05) {
     return {
       status: "resolved",
       candidate: top,
@@ -380,7 +397,7 @@ async function hydrateCandidate(candidate: Candidate, settings: ExtensionSetting
     const wiki = await fetchWikipediaSummaryByTitle(candidate.title);
     details = {
       title: wiki?.title || candidate.title,
-      mediaType: candidate.mediaType === "unknown" ? normalized.hintType || "movie" : candidate.mediaType,
+      mediaType: candidate.mediaType === "unknown" ? normalized.hintType || "unknown" : candidate.mediaType,
       year: candidate.year || normalized.hintYear,
       sourceAttribution: wiki?.sourceAttribution || "Wikipedia",
       synopsisSource: wiki?.synopsisSource || "",
@@ -480,22 +497,30 @@ async function hydrateCandidate(candidate: Candidate, settings: ExtensionSetting
   if (details.mediaType !== "book" && settings.providerToggles.wikipedia && (!details.synopsisSource || !details.artworkUrl)) {
     const hadSynopsisBeforeWiki = Boolean(details.synopsisSource);
     const hadArtworkBeforeWiki = Boolean(details.artworkUrl);
-    const wiki = await fetchWikipediaSummaryByTitle(details.title || normalized.query);
-    if (wiki?.synopsisSource && !details.synopsisSource) {
-      details.synopsisSource = wiki.synopsisSource;
-      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
+    try {
+      const wiki = await fetchWikipediaSummaryByTitle(details.title || normalized.query);
+      if (wiki?.synopsisSource && !details.synopsisSource) {
+        details.synopsisSource = wiki.synopsisSource;
+        details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
+      }
+      if (wiki?.artworkUrl && !details.artworkUrl) {
+        details.artworkUrl = wiki.artworkUrl;
+        details.artworkKind = wiki.artworkKind || "thumbnail";
+        details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
+      }
+      providerTrace.push({
+        step: "wikipedia_enrichment",
+        status: wiki?.synopsisSource || wiki?.artworkUrl ? "ok" : "no_enrichment",
+        addedSynopsis: Boolean(wiki?.synopsisSource && !hadSynopsisBeforeWiki),
+        addedArtwork: Boolean(wiki?.artworkUrl && !hadArtworkBeforeWiki),
+      });
+    } catch (error) {
+      providerTrace.push({
+        step: "wikipedia_enrichment",
+        status: "error",
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
-    if (wiki?.artworkUrl && !details.artworkUrl) {
-      details.artworkUrl = wiki.artworkUrl;
-      details.artworkKind = wiki.artworkKind || "thumbnail";
-      details.sourceAttribution = appendSourceAttribution(details.sourceAttribution, wiki.sourceAttribution);
-    }
-    providerTrace.push({
-      step: "wikipedia_enrichment",
-      status: wiki?.synopsisSource || wiki?.artworkUrl ? "ok" : "no_enrichment",
-      addedSynopsis: Boolean(wiki?.synopsisSource && !hadSynopsisBeforeWiki),
-      addedArtwork: Boolean(wiki?.artworkUrl && !hadArtworkBeforeWiki),
-    });
   }
 
   return {
@@ -592,7 +617,7 @@ function toResult(details: LookupDetails, settings: ExtensionSettings, fromCache
 }
 
 async function lookupFallback(normalized: NormalizedQuery, settings: ExtensionSettings, providerHealth: ProviderHealth) {
-  if (normalized.hintType === "book") {
+  async function lookupBookFallback() {
     const fallback: any = await fetchGoodreadsFallback({
       title: normalized.query || normalized.raw,
       year: normalized.hintYear,
@@ -649,7 +674,16 @@ async function lookupFallback(normalized: NormalizedQuery, settings: ExtensionSe
     };
   }
 
+  if (normalized.hintType === "book") {
+    return lookupBookFallback();
+  }
+
   if (!settings.providerToggles.wikipedia) {
+    if (canTryBookFallback(normalized)) {
+      const bookFallback = await lookupBookFallback();
+      if (bookFallback?.details) return bookFallback;
+    }
+
     return {
       details: undefined,
       debug: {
@@ -664,6 +698,11 @@ async function lookupFallback(normalized: NormalizedQuery, settings: ExtensionSe
   const ranked = rankCandidates(wikiCandidates, normalized);
   const decision = chooseWikipediaFallbackCandidate(ranked, normalized);
   if (decision.status !== "resolved") {
+    if (canTryBookFallback(normalized)) {
+      const bookFallback = await lookupBookFallback();
+      if (bookFallback?.details) return bookFallback;
+    }
+
     return {
       details: undefined,
       debug: {

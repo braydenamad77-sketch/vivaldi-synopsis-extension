@@ -5,6 +5,21 @@ const MEDIA_HINTS = {
   movie: /\b(movie|film|cinema|director)\b/i,
   tv: /\b(tv|series|show|episode|season)\b/i,
 };
+const CONTEXT_ONLY_TOKENS = new Set([
+  "author",
+  "book",
+  "cinema",
+  "director",
+  "episode",
+  "film",
+  "movie",
+  "novel",
+  "read",
+  "season",
+  "series",
+  "show",
+  "tv",
+]);
 
 function stripLikelyContextNoise(text: string) {
   let result = text || "";
@@ -29,7 +44,7 @@ export function normalizeQuery(raw: string): NormalizedQuery {
   const compact = input.replace(/\s+/g, " ").trim();
 
   const yearMatch = compact.match(/(?:^|\D)((?:19|20)\d{2})(?:\D|$)/);
-  const hintYear = yearMatch ? Number(yearMatch[1]) : undefined;
+  let hintYear = yearMatch ? Number(yearMatch[1]) : undefined;
 
   let query = compact
     .replace(/[“”"'`]/g, "")
@@ -38,10 +53,16 @@ export function normalizeQuery(raw: string): NormalizedQuery {
     .trim();
 
   if (hintYear) {
-    query = query
+    const strippedYearQuery = query
       .replace(new RegExp(`\\(?\\b${hintYear}\\b\\)?`, "g"), "")
       .replace(/\s{2,}/g, " ")
       .trim();
+
+    if (strippedYearQuery && !looksLikeContextOnlyQuery(strippedYearQuery)) {
+      query = strippedYearQuery;
+    } else {
+      hintYear = undefined;
+    }
   }
 
   query = stripLikelyContextNoise(query);
@@ -71,6 +92,11 @@ export function normalizeTitleForCompare(value: string) {
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function looksLikeContextOnlyQuery(value: string) {
+  const tokens = normalizeTitleForCompare(value).split(" ").filter(Boolean);
+  return tokens.length > 0 && tokens.every((token) => CONTEXT_ONLY_TOKENS.has(token));
 }
 
 export function buildCacheKey(normalizedQuery: NormalizedQuery) {
