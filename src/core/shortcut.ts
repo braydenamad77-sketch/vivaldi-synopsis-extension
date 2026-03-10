@@ -23,7 +23,7 @@ export function normalizeShortcutKey(rawValue: string | undefined | null) {
   if (value.length !== 1) return DEFAULT_SEARCH_SHORTCUT_KEY;
   if (/\s/.test(value)) return DEFAULT_SEARCH_SHORTCUT_KEY;
 
-  return value;
+  return /^[a-z]$/i.test(value) ? value.toLowerCase() : value;
 }
 
 export function formatShortcutLabel(rawValue: string | undefined | null) {
@@ -47,12 +47,17 @@ export function isShortcutMatch(event: ShortcutEvent | null | undefined, rawValu
     );
   }
 
+  if (/^[a-z]$/i.test(expectedKey)) {
+    return String(event.key || "").toLowerCase() === expectedKey;
+  }
+
   return event.key === expectedKey;
 }
 
 export function isConfigurableShortcutKey(event: ShortcutEvent | null | undefined) {
   if (!event) return false;
   if (event.metaKey || event.ctrlKey || event.altKey) return false;
+  if (event.shiftKey) return false;
   if (event.key === "Tab") return false;
   if (event.key === "Escape") return false;
   return typeof event.key === "string" && event.key.length === 1 && !/\s/.test(event.key);

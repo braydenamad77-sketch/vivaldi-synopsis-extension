@@ -284,7 +284,8 @@ async function processLookup(selectionText: string, tabId: number, options: { wi
 
     safeSendMessage(tabId, {
       type: "SHOW_AMBIGUOUS",
-      requestId: response.requestId,
+      requestId,
+      ambiguityRequestId: response.requestId,
       candidates: response.candidates,
       originalQuery: selectionText,
       note: response.note,

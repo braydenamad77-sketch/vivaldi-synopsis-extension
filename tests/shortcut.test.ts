@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_SEARCH_SHORTCUT_KEY,
   formatShortcutLabel,
+  isConfigurableShortcutKey,
   isShortcutMatch,
   normalizeShortcutKey,
 } from "../src/core/shortcut";
@@ -11,6 +12,7 @@ import {
 test("normalizeShortcutKey defaults to backslash", () => {
   assert.equal(normalizeShortcutKey(""), DEFAULT_SEARCH_SHORTCUT_KEY);
   assert.equal(normalizeShortcutKey("backslash"), "\\");
+  assert.equal(normalizeShortcutKey("A"), "a");
 });
 
 test("formatShortcutLabel gives readable backslash copy", () => {
@@ -39,5 +41,19 @@ test("isShortcutMatch supports physical backslash keycodes", () => {
       "\\",
     ),
     true,
+  );
+});
+
+test("isShortcutMatch treats saved letter shortcuts case-insensitively", () => {
+  assert.equal(
+    isShortcutMatch({ key: "A", code: "KeyA", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false }, "a"),
+    true,
+  );
+});
+
+test("isConfigurableShortcutKey rejects shift-modified shortcuts", () => {
+  assert.equal(
+    isConfigurableShortcutKey({ key: "A", code: "KeyA", metaKey: false, ctrlKey: false, altKey: false, shiftKey: true }),
+    false,
   );
 });

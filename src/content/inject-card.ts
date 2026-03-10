@@ -1,4 +1,6 @@
 import { DEFAULT_SETTINGS, getSynopsisPopupUiFlagVersion } from "../config/constants";
+import { isStaleLookupResponse, trackLatestLookupRequest } from "../content/request-state";
+import { isShortcutMatch } from "../core/shortcut";
 import type { Candidate, ExtensionSettings, LookupResult } from "../types";
 import type {
   BackgroundRuntimeRequest,
@@ -109,6 +111,7 @@ export function startSynopsisContentScript() {
   let searchShortcutKey = "\\";
   let editorialSynopsisPopupEnabled = DEFAULT_SETTINGS.editorialSynopsisPopupEnabled;
   let synopsisUiFlagVersion = getSynopsisPopupUiFlagVersion(editorialSynopsisPopupEnabled);
+  let activeLookupRequestId = "";
   let lastContextMenuPos: CardAnchor | null = null;
   let restoreFocusTarget: HTMLElement | null = null;
 
@@ -226,6 +229,14 @@ export function startSynopsisContentScript() {
     }
   }
 
+  function shouldIgnoreLookupMessage(requestId: string | undefined) {
+    return isStaleLookupResponse(activeLookupRequestId, requestId);
+  }
+
+  function beginLookup(requestId: string | undefined) {
+    activeLookupRequestId = trackLatestLookupRequest(activeLookupRequestId, requestId);
+  }
+
   function readCardAnchor(card: HTMLElement | null) {
     if (!card) return null;
     const rect = card.getBoundingClientRect();
@@ -331,7 +342,7 @@ export function startSynopsisContentScript() {
   if (chrome?.storage?.onChanged?.addListener) {
     const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: chrome.storage.AreaName) => {
       const settingsChange = changes.settings;
-      if (areaName !== "local" || !settingsChange?.newValue) return;
+      if (areaName !== "local" || !settingsChange) return;
       applyExtensionSettings(settingsChange.newValue as Partial<ExtensionSettings> | undefined);
     };
     chrome.storage.onChanged.addListener(handleStorageChange);
@@ -341,14 +352,7 @@ export function startSynopsisContentScript() {
   const handleSlashShortcut = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (isEditableTarget(event.target)) return;
-
-    if (event.metaKey || event.ctrlKey || event.altKey) return;
-
-    const isBackslash =
-      searchShortcutKey === "\\" &&
-      (event.key === "\\" || event.key === "Backslash" || event.code === "Backslash" || event.code === "IntlBackslash");
-    const isConfiguredKey = searchShortcutKey !== "\\" && event.key === searchShortcutKey;
-    if (!isBackslash && !isConfiguredKey) return;
+    if (!isShortcutMatch(event, searchShortcutKey)) return;
 
     event.preventDefault();
     cLog("shortcut:manualSearch:open", { shortcutKey: searchShortcutKey });
@@ -1578,18 +1582,21 @@ export function startSynopsisContentScript() {
     }
 
     if (message.type === "SHOW_LOADING") {
+      beginLookup(message.requestId);
       showLoading(message.query);
       return;
     }
 
     if (message.type === "SHOW_RESULT") {
+      if (shouldIgnoreLookupMessage(message.requestId)) return;
       showResult(message.result, { autoResolved: message.autoResolved !== false });
       return;
     }
 
     if (message.type === "SHOW_AMBIGUOUS") {
+      if (shouldIgnoreLookupMessage(message.requestId)) return;
       showAmbiguous({
-        requestId: String(message.requestId || ""),
+        requestId: String(message.ambiguityRequestId || message.requestId || ""),
         candidates: Array.isArray(message.candidates) ? (message.candidates as Candidate[]) : [],
         originalQuery: String(message.originalQuery || ""),
         note: typeof message.note === "string" ? message.note : undefined,
@@ -1598,6 +1605,7 @@ export function startSynopsisContentScript() {
     }
 
     if (message.type === "SHOW_ERROR") {
+      if (shouldIgnoreLookupMessage(message.requestId)) return;
       showError(message.message, {
         errorCode: message.errorCode,
         lookupQuery: message.lookupQuery,

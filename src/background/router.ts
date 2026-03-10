@@ -249,6 +249,32 @@ function appendSourceAttribution(current: string | undefined, next: string | und
   return deduped.join(" + ");
 }
 
+function providerAttribution(provider: Candidate["provider"]) {
+  if (provider === "openlibrary") return "Open Library";
+  if (provider === "tmdb") return "TMDB";
+  if (provider === "wikipedia") return "Wikipedia";
+  return "Unknown";
+}
+
+function buildSeedDetailsFromCandidate(candidate: Candidate, normalized: NormalizedQuery): LookupDetails {
+  return {
+    title: candidate.title,
+    mediaType: candidate.mediaType === "unknown" ? normalized.hintType || "unknown" : candidate.mediaType,
+    year: candidate.year || normalized.hintYear,
+    sourceAttribution: providerAttribution(candidate.provider),
+    synopsisSource: "",
+    cast: [],
+    artworkUrl: candidate.artworkUrl,
+    artworkKind: candidate.artworkKind || (candidate.artworkUrl ? "poster" : "placeholder"),
+    directorOrCreator: candidate.mediaType === "movie" || candidate.mediaType === "tv" ? candidate.authorOrDirector : undefined,
+    author: candidate.mediaType === "book" ? candidate.authorOrDirector : undefined,
+    genres: [],
+    goodreadsIds: candidate.goodreadsIds,
+    isbn10: candidate.isbn10,
+    isbn13: candidate.isbn13,
+  };
+}
+
 function trimPendingAmbiguities(limit = MAX_PENDING_AMBIGUITIES) {
   while (pendingAmbiguities.size > limit) {
     const oldestKey = pendingAmbiguities.keys().next().value;
@@ -373,58 +399,70 @@ function mergeCandidates(primaryCandidates: Candidate[], wikiCandidates: Candida
 }
 
 async function hydrateCandidate(candidate: Candidate, settings: ExtensionSettings, normalized: NormalizedQuery) {
-  let details: LookupDetails;
+  let details = buildSeedDetailsFromCandidate(candidate, normalized);
   const providerTrace: AnyRecord[] = [];
 
   if (candidate.provider === "openlibrary") {
-    details = await fetchOpenLibraryDetails(candidate);
-    providerTrace.push({
-      step: "openlibrary_details",
-      status: details.synopsisSource ? "ok" : "missing_synopsis",
-      title: details.title,
-      hasArtwork: Boolean(details.artworkUrl),
-    });
+    try {
+      details = await fetchOpenLibraryDetails(candidate);
+      providerTrace.push({
+        step: "openlibrary_details",
+        status: details.synopsisSource ? "ok" : "missing_synopsis",
+        title: details.title,
+        hasArtwork: Boolean(details.artworkUrl),
+      });
+    } catch (error) {
+      providerTrace.push({
+        step: "openlibrary_details",
+        status: "error",
+        title: details.title,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   } else if (candidate.provider === "tmdb") {
-    details = await fetchTmdbDetails(candidate, settings.tmdbApiKey);
-    providerTrace.push({
-      step: "tmdb_details",
-      status: "ok",
-      title: details.title,
-      hasSynopsis: Boolean(details.synopsisSource),
-      hasArtwork: Boolean(details.artworkUrl),
-    });
+    try {
+      details = await fetchTmdbDetails(candidate, settings.tmdbApiKey);
+      providerTrace.push({
+        step: "tmdb_details",
+        status: "ok",
+        title: details.title,
+        hasSynopsis: Boolean(details.synopsisSource),
+        hasArtwork: Boolean(details.artworkUrl),
+      });
+    } catch (error) {
+      providerTrace.push({
+        step: "tmdb_details",
+        status: "error",
+        title: details.title,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   } else if (candidate.provider === "wikipedia") {
-    const wiki = await fetchWikipediaSummaryByTitle(candidate.title);
-    details = {
-      title: wiki?.title || candidate.title,
-      mediaType: candidate.mediaType === "unknown" ? normalized.hintType || "unknown" : candidate.mediaType,
-      year: candidate.year || normalized.hintYear,
-      sourceAttribution: wiki?.sourceAttribution || "Wikipedia",
-      synopsisSource: wiki?.synopsisSource || "",
-      cast: [],
-      artworkUrl: wiki?.artworkUrl || candidate.artworkUrl,
-      artworkKind: wiki?.artworkKind || candidate.artworkKind || "placeholder",
-      directorOrCreator: undefined,
-      author: undefined,
-      genres: [],
-    };
-    providerTrace.push({
-      step: "wikipedia_details",
-      status: details.synopsisSource ? "ok" : "missing_synopsis",
-      title: details.title,
-      hasArtwork: Boolean(details.artworkUrl),
-    });
+    try {
+      const wiki = await fetchWikipediaSummaryByTitle(candidate.title);
+      details = {
+        ...details,
+        title: wiki?.title || candidate.title,
+        sourceAttribution: wiki?.sourceAttribution || "Wikipedia",
+        synopsisSource: wiki?.synopsisSource || "",
+        artworkUrl: wiki?.artworkUrl || candidate.artworkUrl,
+        artworkKind: wiki?.artworkKind || candidate.artworkKind || "placeholder",
+      };
+      providerTrace.push({
+        step: "wikipedia_details",
+        status: details.synopsisSource ? "ok" : "missing_synopsis",
+        title: details.title,
+        hasArtwork: Boolean(details.artworkUrl),
+      });
+    } catch (error) {
+      providerTrace.push({
+        step: "wikipedia_details",
+        status: "error",
+        title: details.title,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
   } else {
-    details = {
-      title: candidate.title,
-      mediaType: candidate.mediaType,
-      year: candidate.year,
-      sourceAttribution: "Unknown",
-      synopsisSource: "",
-      cast: [],
-      artworkUrl: candidate.artworkUrl,
-      artworkKind: candidate.artworkKind || "placeholder",
-    };
     providerTrace.push({
       step: "candidate_seed",
       status: "unknown",

@@ -49,6 +49,7 @@ export type ContentUiMessage =
   | {
       type: "SHOW_AMBIGUOUS";
       requestId: string;
+      ambiguityRequestId?: string;
       candidates: Candidate[];
       originalQuery: string;
       note?: string;
