@@ -41,6 +41,27 @@ const els = {
 let shortcutDraft = DEFAULT_SEARCH_SHORTCUT_KEY;
 let statusTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
+const interactiveControls = [
+  els.openrouterApiKey,
+  els.openrouterModel,
+  els.tmdbApiKey,
+  els.searchShortcutKey,
+  els.resetShortcutBtn,
+  els.resultUiModePanel,
+  els.resultUiModeCompact,
+  els.editorialSynopsisPopupEnabled,
+  els.llmEnabled,
+  els.llmPreferred,
+  els.localOnlyMode,
+  els.goodreadsVisualFallbackEnabled,
+  els.goodreadsHelperUrl,
+  els.providerOpenLibrary,
+  els.providerTmdb,
+  els.providerWikipedia,
+  els.saveBtn,
+  els.clearCacheBtn,
+];
+
 function mergeSettings(stored: Partial<typeof DEFAULT_SETTINGS> | undefined) {
   const merged = {
     ...DEFAULT_SETTINGS,
@@ -138,6 +159,12 @@ function syncUiState() {
   renderSummary();
 }
 
+function setOptionsReady(nextReady: boolean) {
+  interactiveControls.forEach((element) => {
+    element.disabled = !nextReady;
+  });
+}
+
 async function loadSettings() {
   const payload = await chrome.storage.local.get("settings");
   const settings = mergeSettings(payload.settings as Partial<ExtensionSettings> | undefined);
@@ -158,6 +185,7 @@ async function loadSettings() {
   els.providerTmdb.checked = settings.providerToggles.tmdb;
   els.providerWikipedia.checked = settings.providerToggles.wikipedia;
   syncUiState();
+  setOptionsReady(true);
 }
 
 function collectSettings() {
@@ -239,6 +267,7 @@ els.clearCacheBtn.addEventListener("click", () => {
   wipeCache().catch((error) => setStatus(`Cache clear failed: ${error.message}`));
 });
 
+setOptionsReady(false);
 loadSettings()
   .then(() => syncUiState())
   .catch((error) => setStatus(`Load failed: ${error.message}`));

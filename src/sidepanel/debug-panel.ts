@@ -241,13 +241,13 @@ function renderEvent(event: DebugEvent) {
   return article;
 }
 
-async function render() {
+async function render(statusMessage?: string) {
   const state = await getDebugState();
   els.events.textContent = "";
   els.goodreadsTestBtn.disabled = !state.enabled;
 
   if (!state.enabled) {
-    els.stateText.textContent = "Debug mode is off. Turn it on from the extension popup.";
+    els.stateText.textContent = statusMessage || "Debug mode is off. Turn it on from the extension popup.";
     const empty = document.createElement("div");
     empty.className = "empty";
     empty.textContent = "No traces are being recorded right now.";
@@ -255,7 +255,7 @@ async function render() {
     return;
   }
 
-  els.stateText.textContent = "Debug mode is on. The newest lookup and OpenRouter traces appear here.";
+  els.stateText.textContent = statusMessage || "Debug mode is on. The newest lookup and OpenRouter traces appear here.";
 
   if (!state.events.length) {
     const empty = document.createElement("div");
@@ -278,20 +278,21 @@ els.clearBtn.addEventListener("click", async () => {
 els.goodreadsTestBtn.addEventListener("click", async () => {
   els.goodreadsTestBtn.disabled = true;
   const previous = els.stateText.textContent;
+  let finalStatus = "";
   els.stateText.textContent = "Running Goodreads visual test...";
 
   try {
     const response = (await chrome.runtime.sendMessage({ type: "RUN_GOODREADS_VISUAL_TEST" })) as GoodreadsVisualTestResponse;
-    els.stateText.textContent =
+    finalStatus =
       response?.status === "ok"
         ? `Goodreads test finished for ${response.title || "book"}.`
         : response?.message || "Goodreads test failed.";
-    await render();
+    await render(finalStatus);
   } catch (error: unknown) {
     els.stateText.textContent = error instanceof Error ? error.message : "Could not run Goodreads test.";
   } finally {
-    els.goodreadsTestBtn.disabled = false;
-    if (!els.events.children.length) {
+    els.goodreadsTestBtn.disabled = !(await getDebugState()).enabled;
+    if (!els.events.children.length && !els.stateText.textContent) {
       els.stateText.textContent = previous;
     }
   }

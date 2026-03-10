@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wxt -b chrome",
+    "dev:open": "WXT_OPEN_BROWSER=1 wxt -b chrome",
     "build": "wxt build -b chrome",
     "zip": "wxt zip -b chrome",
     "prepare": "wxt prepare",

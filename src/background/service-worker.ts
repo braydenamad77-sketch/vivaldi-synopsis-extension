@@ -1,10 +1,12 @@
 import {
+  getSynopsisPopupUiFlagVersion,
   MENU_LABEL_LOOKUP_MANUAL,
   MENU_LABEL_LOOKUP_SELECTION,
   MENU_LOOKUP_MANUAL,
   MENU_LOOKUP_SELECTION,
 } from "../config/constants";
-import { lookupSynopsis, requestAlternatives, resolveAmbiguity, runGoodreadsVisualDebugTest } from "./router";
+import { getManualSearchAvailability, SUPPORTED_LOOKUP_PAGE_PATTERNS } from "../core/manual-search";
+import { getSettings, lookupSynopsis, requestAlternatives, resolveAmbiguity, runGoodreadsVisualDebugTest } from "./router";
 import type { LookupResponse } from "../types";
 import type {
   BackgroundRuntimeRequest,
@@ -40,6 +42,7 @@ async function createContextMenu() {
         id: MENU_LOOKUP_SELECTION,
         title: MENU_LABEL_LOOKUP_SELECTION,
         contexts: ["selection"],
+        documentUrlPatterns: [...SUPPORTED_LOOKUP_PAGE_PATTERNS],
       },
       () => {
         // Ignore duplicate creation during rapid extension reloads.
@@ -56,6 +59,7 @@ async function createContextMenu() {
         id: MENU_LOOKUP_MANUAL,
         title: MENU_LABEL_LOOKUP_MANUAL,
         contexts: ["page"],
+        documentUrlPatterns: [...SUPPORTED_LOOKUP_PAGE_PATTERNS],
       },
       () => {
         if (chrome.runtime?.lastError) {
@@ -112,6 +116,33 @@ function sendMessageWithAck(tabId: number, payload: ContentUiMessage): Promise<b
   });
 }
 
+function pingUi(tabId: number): Promise<ContentScriptAckResponse | null> {
+  if (!hasTabId(tabId)) return Promise.resolve(null);
+
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: "VS_PING" }, (response?: ContentScriptAckResponse) => {
+      if (chrome.runtime?.lastError) {
+        swLog("pingUi:lastError", {
+          tabId,
+          message: chrome.runtime.lastError.message,
+        });
+        resolve(null);
+        return;
+      }
+
+      resolve(response || null);
+    });
+  });
+}
+
+function buildSynopsisUiFlags(settings: Awaited<ReturnType<typeof getSettings>>) {
+  const editorialSynopsisPopup = settings.editorialSynopsisPopupEnabled !== false;
+  return {
+    editorialSynopsisPopup,
+    version: getSynopsisPopupUiFlagVersion(editorialSynopsisPopup),
+  };
+}
+
 async function injectUiAssets(tabId: number): Promise<boolean> {
   if (!hasTabId(tabId)) return false;
   if (!chrome.scripting?.insertCSS || !chrome.scripting?.executeScript) return false;
@@ -140,13 +171,17 @@ async function injectUiAssets(tabId: number): Promise<boolean> {
 
 async function ensureUiAssets(tabId: number): Promise<boolean> {
   if (!hasTabId(tabId)) return false;
-  let ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
-  if (ready) return true;
+  const settings = await getSettings();
+  const flags = buildSynopsisUiFlags(settings);
+
+  let ping = await pingUi(tabId);
+  const alreadyReady = Boolean(ping?.ok) && ping?.uiFlagVersion === flags.version;
+  if (alreadyReady) return true;
 
   await new Promise((resolve) => setTimeout(resolve, 60));
-  ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
-  if (ready) {
-    swLog("ensureUiAssets:readyAfterRetry", { tabId, ready });
+  ping = await pingUi(tabId);
+  if (Boolean(ping?.ok) && ping?.uiFlagVersion === flags.version) {
+    swLog("ensureUiAssets:readyAfterRetry", { tabId, uiFlagVersion: ping?.uiFlagVersion });
     return true;
   }
 
@@ -154,8 +189,9 @@ async function ensureUiAssets(tabId: number): Promise<boolean> {
   if (!injected) return false;
 
   await new Promise((resolve) => setTimeout(resolve, 60));
-  ready = await sendMessageWithAck(tabId, { type: "VS_PING" });
-  swLog("ensureUiAssets:readyAfterInject", { tabId, ready });
+  ping = await pingUi(tabId);
+  const ready = Boolean(ping?.ok) && ping?.uiFlagVersion === flags.version;
+  swLog("ensureUiAssets:readyAfterInject", { tabId, ready, uiFlagVersion: ping?.uiFlagVersion, expectedVersion: flags.version });
   return ready;
 }
 
@@ -313,6 +349,11 @@ export function startBackground() {
       }
 
       if (info.menuItemId === MENU_LOOKUP_MANUAL) {
+        const availability = getManualSearchAvailability(info.pageUrl || tab?.url);
+        if (!availability.enabled) {
+          swLog("contextMenus:onClicked:manual:unavailable", { tabId, pageLabel: availability.pageLabel });
+          return;
+        }
         await showManualSearchInput(tabId);
       }
     });
@@ -367,12 +408,23 @@ export function startBackground() {
 
       if (message?.type === "OPEN_SEARCH_IN_ACTIVE_TAB") {
         chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
-          const tabId = tabs?.[0]?.id;
+          const activeTab = tabs?.[0];
+          const tabId = activeTab?.id;
           if (!hasTabId(tabId)) {
             sendResponse({
               status: "error",
               errorCode: "NO_ACTIVE_TAB",
               message: "Could not find the active tab.",
+            } satisfies StatusErrorResponse);
+            return;
+          }
+
+          const availability = getManualSearchAvailability(activeTab?.url);
+          if (!availability.enabled) {
+            sendResponse({
+              status: "error",
+              errorCode: "SEARCH_INPUT_UNAVAILABLE",
+              message: availability.message,
             } satisfies StatusErrorResponse);
             return;
           }
@@ -383,7 +435,7 @@ export function startBackground() {
               sendResponse({
                 status: "error",
                 errorCode: "SEARCH_INPUT_UNAVAILABLE",
-                message: "Manual search could not open on this page.",
+                message: "Manual search could not open on this page. Reload the tab and try again.",
               } satisfies StatusErrorResponse);
               return;
             }

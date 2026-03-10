@@ -16,6 +16,7 @@ export default defineConfig({
   targetBrowsers: ["chrome"],
   manifestVersion: 3,
   webExt: {
+    disabled: process.env.WXT_OPEN_BROWSER !== "1",
     keepProfileChanges: true,
   },
   manifest: {
