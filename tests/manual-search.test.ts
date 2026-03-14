@@ -15,6 +15,14 @@ test("manual search is enabled on regular websites", () => {
   });
 });
 
+test("manual search keeps meaningful subdomains in the page label", () => {
+  assert.deepEqual(getManualSearchAvailability("https://m.example.com/books/42"), {
+    enabled: true,
+    pageLabel: "m.example.com",
+    message: "Manual search opens directly inside this page.",
+  });
+});
+
 test("manual search is blocked on built-in browser pages", () => {
   assert.deepEqual(getManualSearchAvailability("vivaldi://settings"), {
     enabled: false,

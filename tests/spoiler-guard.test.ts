@@ -22,6 +22,16 @@ test("sanitizeSynopsis falls back to safe template when empty", () => {
   assert.equal(sanitized, safeTemplate({ title: "Mystery" }));
 });
 
+test("sanitizeSynopsis uses the book-safe fallback wording for short book summaries", () => {
+  const sanitized = sanitizeSynopsis("A student fights to survive.", {
+    title: "The Testing Book",
+    mediaType: "book",
+  });
+
+  assert.equal(sanitized, safeTemplate({ title: "The Testing Book", mediaType: "book" }));
+  assert.match(sanitized, /\bmain character\b/);
+});
+
 test("trimToWordLimit keeps higher word caps intact until the limit", () => {
   const text = Array.from({ length: 800 }, (_, index) => `word${index + 1}`).join(" ");
   const trimmed = trimToWordLimit(text, 750);
