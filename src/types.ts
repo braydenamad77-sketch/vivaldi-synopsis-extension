@@ -16,7 +16,6 @@ export interface ExtensionSettings {
   localOnlyMode: boolean;
   searchShortcutKey: string;
   resultUiMode: "with_image" | "without_image" | string;
-  editorialSynopsisPopupEnabled: boolean;
   tmdbApiKey: string;
   goodreadsVisualFallbackEnabled: boolean;
   goodreadsHelperUrl: string;

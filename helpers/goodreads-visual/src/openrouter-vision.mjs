@@ -1,5 +1,5 @@
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview";
+const DEFAULT_MODEL = "openrouter/hunter-alpha";
 
 function toDataUrl(buffer) {
   return `data:image/jpeg;base64,${buffer.toString("base64")}`;

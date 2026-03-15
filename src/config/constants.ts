@@ -1,3 +1,6 @@
+import type { ExtensionSettings } from "../types";
+import { DEFAULT_OPENROUTER_MODEL } from "./openrouter-models";
+
 export const MENU_LOOKUP_SELECTION = "get-synopsis-selection";
 export const MENU_LOOKUP_MANUAL = "get-synopsis-manual";
 export const MENU_LABEL_LOOKUP_SELECTION = "Get Synopsis";
@@ -10,10 +13,9 @@ export const GOODREADS_TIMEOUT_MS = 1000 * 30;
 export const GOODREADS_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 export const GOODREADS_HELPER_URL_DEFAULT = "http://127.0.0.1:4317";
 export const MAX_CANDIDATES = 5;
-export const DEFAULT_MODEL = "google/gemini-3.1-flash-lite-preview";
-export const ENABLE_EDITORIAL_SYNOPSIS_POPUP = true;
-export function getSynopsisPopupUiFlagVersion(enabled: boolean) {
-  return enabled ? "editorial-v1" : "legacy-v1";
+export const DEFAULT_MODEL = DEFAULT_OPENROUTER_MODEL;
+export function getSynopsisPopupUiFlagVersion() {
+  return "legacy-v2";
 }
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
@@ -24,7 +26,6 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   localOnlyMode: false,
   searchShortcutKey: "\\",
   resultUiMode: "with_image",
-  editorialSynopsisPopupEnabled: ENABLE_EDITORIAL_SYNOPSIS_POPUP,
   tmdbApiKey: "",
   goodreadsVisualFallbackEnabled: true,
   goodreadsHelperUrl: GOODREADS_HELPER_URL_DEFAULT,
@@ -57,4 +58,3 @@ export const ATTRIBUTION = {
   goodreads: "Goodreads",
   llm: "OpenRouter",
 };
-import type { ExtensionSettings } from "../types";

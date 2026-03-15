@@ -66,6 +66,8 @@ export type ContentUiMessage =
 export interface ContentScriptAckResponse {
   ok: boolean;
   uiFlagVersion?: string;
+  opened?: boolean;
+  focused?: boolean;
 }
 
 export interface StatusOkResponse {

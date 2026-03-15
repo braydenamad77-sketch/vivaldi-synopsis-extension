@@ -24,7 +24,6 @@ const els = {
   resetShortcutBtn: byId<HTMLButtonElement>("resetShortcutBtn"),
   resultUiModePanel: byId<HTMLInputElement>("resultUiModePanel"),
   resultUiModeCompact: byId<HTMLInputElement>("resultUiModeCompact"),
-  editorialSynopsisPopupEnabled: byId<HTMLInputElement>("editorialSynopsisPopupEnabled"),
   llmEnabled: byId<HTMLInputElement>("llmEnabled"),
   llmPreferred: byId<HTMLInputElement>("llmPreferred"),
   localOnlyMode: byId<HTMLInputElement>("localOnlyMode"),
@@ -49,7 +48,6 @@ const interactiveControls = [
   els.resetShortcutBtn,
   els.resultUiModePanel,
   els.resultUiModeCompact,
-  els.editorialSynopsisPopupEnabled,
   els.llmEnabled,
   els.llmPreferred,
   els.localOnlyMode,
@@ -136,12 +134,6 @@ function renderSummary() {
     messages.push("Local-only mode is on, so uncached lookups will fail until you turn it back off.");
   }
 
-  messages.push(
-    els.editorialSynopsisPopupEnabled.checked
-      ? "The new editorial synopsis popup is enabled."
-      : "The original legacy synopsis popup is enabled.",
-  );
-
   messages.push(`Manual search shortcut: ${formatShortcutLabel(shortcutDraft)}.`);
 
   els.settingsSummary.replaceChildren(
@@ -175,7 +167,6 @@ async function loadSettings() {
   shortcutDraft = normalizeShortcutKey(settings.searchShortcutKey || DEFAULT_SEARCH_SHORTCUT_KEY);
   els.resultUiModePanel.checked = settings.resultUiMode === "with_image";
   els.resultUiModeCompact.checked = settings.resultUiMode === "without_image";
-  els.editorialSynopsisPopupEnabled.checked = settings.editorialSynopsisPopupEnabled;
   els.llmEnabled.checked = settings.llmEnabled;
   els.llmPreferred.checked = settings.llmPreferred;
   els.localOnlyMode.checked = settings.localOnlyMode;
@@ -195,7 +186,6 @@ function collectSettings() {
     tmdbApiKey: els.tmdbApiKey.value.trim(),
     searchShortcutKey: normalizeShortcutKey(shortcutDraft),
     resultUiMode: els.resultUiModeCompact.checked ? "without_image" : "with_image",
-    editorialSynopsisPopupEnabled: els.editorialSynopsisPopupEnabled.checked,
     llmEnabled: els.llmEnabled.checked,
     llmPreferred: els.llmPreferred.checked,
     localOnlyMode: els.localOnlyMode.checked,
@@ -245,7 +235,6 @@ els.resetShortcutBtn.addEventListener("click", () => {
   els.tmdbApiKey,
   els.resultUiModePanel,
   els.resultUiModeCompact,
-  els.editorialSynopsisPopupEnabled,
   els.llmEnabled,
   els.llmPreferred,
   els.localOnlyMode,

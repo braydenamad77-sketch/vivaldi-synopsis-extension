@@ -1,4 +1,11 @@
 import { DEFAULT_SETTINGS } from "../config/constants";
+import {
+  DEFAULT_OPENROUTER_MODEL,
+  getOpenRouterModelPreset,
+  getOpenRouterModelValue,
+  LEGACY_OPENROUTER_MODEL,
+  resolveOpenRouterModel,
+} from "../config/openrouter-models";
 import { getManualSearchAvailability } from "../core/manual-search";
 import { getDebugState, setDebugEnabled } from "../debug/store";
 import { formatShortcutLabel, normalizeShortcutKey } from "../core/shortcut";
@@ -15,23 +22,24 @@ function byId<T extends HTMLElement>(id: string) {
 
 const els = {
   debugMode: byId<HTMLInputElement>("debugMode"),
-  editorialSynopsisPopupEnabled: byId<HTMLInputElement>("editorialSynopsisPopupEnabled"),
+  modelPresetNote: byId<HTMLElement>("modelPresetNote"),
+  modelPresetToggle: byId<HTMLInputElement>("modelPresetToggle"),
   pageHost: byId<HTMLElement>("pageHost"),
   pageNote: byId<HTMLElement>("pageNote"),
-  synopsisUiNote: byId<HTMLElement>("synopsisUiNote"),
   shortcutValue: byId<HTMLElement>("shortcutValue"),
   status: byId<HTMLDivElement>("popupStatus"),
   searchBtn: byId<HTMLButtonElement>("searchBtn"),
   optionsBtn: byId<HTMLButtonElement>("optionsBtn"),
 };
-let currentSettings: ExtensionSettings | null = null;
+let currentSettings: ExtensionSettings = mergeSettings(undefined);
 let manualSearchEnabled = true;
+let modelBusy = false;
 let popupReady = false;
 let searchBusy = false;
 
-function syncToggleState() {
+function syncControlState() {
   els.debugMode.disabled = !popupReady;
-  els.editorialSynopsisPopupEnabled.disabled = !popupReady;
+  els.modelPresetToggle.disabled = !popupReady || modelBusy;
 }
 
 function syncSearchButtonState() {
@@ -47,7 +55,7 @@ function syncSearchButtonState() {
 
 function setPopupReady(nextReady: boolean) {
   popupReady = nextReady;
-  syncToggleState();
+  syncControlState();
   syncSearchButtonState();
 }
 
@@ -67,12 +75,6 @@ function mergeSettings(stored: Partial<typeof DEFAULT_SETTINGS> | undefined) {
   };
 }
 
-function renderSynopsisUiNote(enabled: boolean) {
-  els.synopsisUiNote.textContent = enabled
-    ? "Use the new editorial synopsis popup."
-    : "Use the original legacy synopsis popup.";
-}
-
 function renderManualSearchAvailability(url?: string | null) {
   const availability = getManualSearchAvailability(url);
   manualSearchEnabled = availability.enabled;
@@ -81,6 +83,24 @@ function renderManualSearchAvailability(url?: string | null) {
   els.pageNote.textContent = availability.message;
   els.searchBtn.title = availability.enabled ? "Open the manual search field in this page." : availability.message;
   syncSearchButtonState();
+}
+
+function renderModelToggle(model: string) {
+  const resolvedModel = resolveOpenRouterModel(model);
+  const preset = getOpenRouterModelPreset(resolvedModel);
+  els.modelPresetToggle.checked = preset === "hunter_alpha";
+
+  if (preset === "hunter_alpha") {
+    els.modelPresetNote.textContent = `Active model: ${DEFAULT_OPENROUTER_MODEL}. Turn this off to use the legacy model.`;
+    return;
+  }
+
+  if (preset === "legacy") {
+    els.modelPresetNote.textContent = `Active model: ${LEGACY_OPENROUTER_MODEL}. Turn this on to switch to Hunter Alpha.`;
+    return;
+  }
+
+  els.modelPresetNote.textContent = `Active model: ${resolvedModel}. Using this switch will replace it with Hunter Alpha or the legacy model.`;
 }
 
 async function loadPopup() {
@@ -92,10 +112,9 @@ async function loadPopup() {
   const settings = mergeSettings(payload.settings as Partial<ExtensionSettings> | undefined);
   currentSettings = settings;
   renderManualSearchAvailability(tabs?.[0]?.url);
+  renderModelToggle(settings.openrouterModel);
   els.shortcutValue.textContent = formatShortcutLabel(normalizeShortcutKey(settings.searchShortcutKey));
   els.debugMode.checked = debugState.enabled;
-  els.editorialSynopsisPopupEnabled.checked = settings.editorialSynopsisPopupEnabled;
-  renderSynopsisUiNote(settings.editorialSynopsisPopupEnabled);
   setPopupReady(true);
 
   if (!settings.openrouterApiKey) {
@@ -111,16 +130,25 @@ function setSearchBusy(nextBusy: boolean) {
   syncSearchButtonState();
 }
 
-async function updateSynopsisUiPreference(enabled: boolean) {
-  const nextSettings = {
-    ...(currentSettings || mergeSettings(undefined)),
-    editorialSynopsisPopupEnabled: enabled,
-  };
+async function updateOpenRouterModel(useHunterAlpha: boolean) {
+  modelBusy = true;
+  syncControlState();
 
-  await chrome.storage.local.set({ settings: nextSettings });
-  currentSettings = nextSettings;
-  renderSynopsisUiNote(enabled);
-  setStatus(enabled ? "Synopsis UI set to the new editorial popup." : "Synopsis UI set to the original legacy popup.", "success");
+  try {
+    const payload = await chrome.storage.local.get("settings");
+    const settings = mergeSettings(payload.settings as Partial<ExtensionSettings> | undefined);
+    settings.openrouterModel = getOpenRouterModelValue(useHunterAlpha ? "hunter_alpha" : "legacy");
+    await chrome.storage.local.set({ settings });
+    currentSettings = settings;
+    renderModelToggle(settings.openrouterModel);
+    setStatus(useHunterAlpha ? "OpenRouter model set to Hunter Alpha." : "OpenRouter model set to the legacy model.", "success");
+  } catch (error) {
+    renderModelToggle(currentSettings.openrouterModel);
+    setStatus(error instanceof Error ? error.message : "Could not update OpenRouter model.", "error");
+  } finally {
+    modelBusy = false;
+    syncControlState();
+  }
 }
 
 async function updateDebugMode(enabled: boolean) {
@@ -189,11 +217,10 @@ els.debugMode.addEventListener("change", () => {
   });
 });
 
-els.editorialSynopsisPopupEnabled.addEventListener("change", () => {
-  updateSynopsisUiPreference(els.editorialSynopsisPopupEnabled.checked).catch((error) => {
-    els.editorialSynopsisPopupEnabled.checked = !(els.editorialSynopsisPopupEnabled.checked);
-    renderSynopsisUiNote(els.editorialSynopsisPopupEnabled.checked);
-    setStatus(error?.message || "Could not update the synopsis UI preference.", "error");
+els.modelPresetToggle.addEventListener("change", () => {
+  updateOpenRouterModel(els.modelPresetToggle.checked).catch((error) => {
+    renderModelToggle(currentSettings.openrouterModel);
+    setStatus(error?.message || "Could not update OpenRouter model.", "error");
   });
 });
 

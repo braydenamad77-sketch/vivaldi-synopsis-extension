@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, getSynopsisPopupUiFlagVersion } from "../config/constants";
 import { isStaleLookupResponse, trackLatestLookupRequest } from "../content/request-state";
+import { getSearchOverlayPosition, shouldCaptureSearchOverlayKey } from "../content/search-overlay";
 import { isShortcutMatch } from "../core/shortcut";
 import type { Candidate, ExtensionSettings, LookupResult } from "../types";
 import type {
@@ -20,10 +21,10 @@ type ContentCardElement = HTMLElement & {
 type CardMountOptions = {
   anchorPos?: CardAnchor | null;
 };
+type SearchOverlayAck = Pick<ContentScriptAckResponse, "ok" | "opened" | "focused">;
 type ActionButtonOptions = {
   ariaLabel?: string;
   withExternalIcon?: boolean;
-  secondary?: boolean;
 };
 type ResultDisplayOptions = {
   autoResolved?: boolean;
@@ -47,24 +48,11 @@ type AmbiguousPayload = {
   originalQuery: string;
   note?: string;
 };
-type EditorialChoiceGroup = {
-  requestId: string;
-  originalQuery: string;
-  parent: HTMLElement;
-  label: string;
-  items: Candidate[];
-};
 type CandidateButtonGroup = {
   requestId: string;
   originalQuery: string;
   container: HTMLElement;
   items: Candidate[];
-};
-type EditorialShellOptions = {
-  kind: string;
-  title: string;
-  subtitle?: string | null;
-  ariaLabel?: string;
 };
 type LookupDisplayResult = LookupResult & {
   synopsis?: string;
@@ -105,14 +93,12 @@ export function startSynopsisContentScript() {
   const ENABLE_HYBRID_PANEL_BALANCE = true;
   const PANEL_HEIGHT_MIN = 390;
   const PANEL_HEIGHT_MAX = 520;
-  const BRAND_ICON_URL = chrome?.runtime?.getURL ? chrome.runtime.getURL("icon-48.png") : "";
   const FOCUSABLE_SELECTOR =
-    ".vs-search-input, .vs-candidate, .vs-chip--action, .vs-genre-origin, .vs-close, .vs-button, .vs-editorial-search-input, .vs-editorial-choice, .vs-editorial-close, .vs-editorial-button";
+    ".vs-search-input, .vs-candidate, .vs-chip--action, .vs-header-action, .vs-genre-origin, .vs-close, .vs-button";
+  const SEARCH_INPUT_SELECTOR = ".vs-search-input";
   let searchShortcutKey = "\\";
-  let editorialSynopsisPopupEnabled = DEFAULT_SETTINGS.editorialSynopsisPopupEnabled;
-  let synopsisUiFlagVersion = getSynopsisPopupUiFlagVersion(editorialSynopsisPopupEnabled);
+  const synopsisUiFlagVersion = getSynopsisPopupUiFlagVersion();
   let activeLookupRequestId = "";
-  let lastContextMenuPos: CardAnchor | null = null;
   let restoreFocusTarget: HTMLElement | null = null;
 
   function applyExtensionSettings(rawSettings: Partial<ExtensionSettings> | undefined) {
@@ -123,12 +109,16 @@ export function startSynopsisContentScript() {
 
     const shortcutKey = String(settings.searchShortcutKey || "\\").trim();
     searchShortcutKey = shortcutKey || "\\";
-    editorialSynopsisPopupEnabled = settings.editorialSynopsisPopupEnabled !== false;
-    synopsisUiFlagVersion = getSynopsisPopupUiFlagVersion(editorialSynopsisPopupEnabled);
   }
 
   function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
+  }
+
+  function nextTask() {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
   }
 
   function isEditableTarget(target: EventTarget | null) {
@@ -201,16 +191,51 @@ export function startSynopsisContentScript() {
     restoreFocusTarget.focus({ preventScroll: true });
   }
 
-  function focusCard(card: HTMLElement) {
-    const target = card.querySelector(FOCUSABLE_SELECTOR);
-    if (target instanceof HTMLElement) {
+  function getSearchInput(card: ParentNode | null | undefined) {
+    const input = card?.querySelector?.(SEARCH_INPUT_SELECTOR);
+    return input instanceof HTMLInputElement ? input : null;
+  }
+
+  function getExistingSearchCard() {
+    const existing = document.getElementById(CARD_ID) as ContentCardElement | null;
+    if (!existing?.classList.contains("vs-card--search")) return null;
+    return existing;
+  }
+
+  function focusElement(target: HTMLElement | null) {
+    if (!(target instanceof HTMLElement) || !target.isConnected) return false;
+
+    try {
       target.focus({ preventScroll: true });
-      return;
+    } catch {
+      target.focus();
     }
 
-    if (card instanceof HTMLElement) {
-      card.focus({ preventScroll: true });
+    if (target instanceof HTMLInputElement) {
+      const caret = target.value.length;
+      try {
+        target.setSelectionRange(caret, caret);
+      } catch {
+        // Some input types do not support selection ranges.
+      }
     }
+
+    return document.activeElement === target;
+  }
+
+  async function settleFocus(target: HTMLElement | null) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (focusElement(target)) return true;
+      await nextTask();
+    }
+    return false;
+  }
+
+  function focusCard(card: HTMLElement) {
+    const target = card.querySelector(FOCUSABLE_SELECTOR);
+    if (target instanceof HTMLElement) return focusElement(target);
+    if (card instanceof HTMLElement) return focusElement(card);
+    return false;
   }
 
   function closeCard(options: { restoreFocus?: boolean } = {}) {
@@ -294,7 +319,37 @@ export function startSynopsisContentScript() {
     card.__vsAnchorPos = clamped;
   }
 
-  function mountCard(card: ContentCardElement, options: CardMountOptions = {}) {
+  function positionSearchOverlay(card: ContentCardElement) {
+    const rect = card.getBoundingClientRect();
+    const pos = getSearchOverlayPosition(
+      {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      },
+      {
+        width: rect.width,
+        height: rect.height,
+      },
+    );
+
+    card.style.top = `${pos.top}px`;
+    card.style.left = `${pos.left}px`;
+    card.style.visibility = "visible";
+  }
+
+  function installEscapeHandler(card: ContentCardElement) {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      event.preventDefault();
+      closeCard();
+    };
+
+    document.addEventListener("keydown", handleEscape, true);
+    mergeCardCleanup(card, () => document.removeEventListener("keydown", handleEscape, true));
+  }
+
+  function mountAnchoredCard(card: ContentCardElement, options: CardMountOptions = {}) {
     const root = createRoot();
     const existing = document.getElementById(CARD_ID) as ContentCardElement | null;
     const existingAnchor = readCardAnchor(existing);
@@ -304,15 +359,9 @@ export function startSynopsisContentScript() {
     card.style.visibility = "hidden";
     card.style.top = `${window.scrollY}px`;
     card.style.left = `${window.scrollX}px`;
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      event.preventDefault();
-      closeCard();
-    };
-    document.addEventListener("keydown", handleEscape, true);
-    mergeCardCleanup(card, () => document.removeEventListener("keydown", handleEscape, true));
+    card.style.removeProperty("position");
+    card.style.removeProperty("transform");
+    installEscapeHandler(card);
 
     root.appendChild(card);
     applyHybridPanelHeight(card);
@@ -320,15 +369,51 @@ export function startSynopsisContentScript() {
     setTimeout(() => focusCard(card), 0);
   }
 
-  const handleContextMenu = (event: MouseEvent) => {
-    lastContextMenuPos = {
-      top: window.scrollY + event.clientY + 8,
-      left: window.scrollX + event.clientX + 6,
+  async function mountSearchOverlay(card: ContentCardElement) {
+    const existing = getExistingSearchCard();
+    if (existing) {
+      positionSearchOverlay(existing);
+      const focused = await settleFocus(getSearchInput(existing));
+      return {
+        card: existing,
+        input: getSearchInput(existing),
+        opened: true,
+        focused,
+      };
+    }
+
+    const root = createRoot();
+    const existingCard = document.getElementById(CARD_ID) as ContentCardElement | null;
+    rememberFocusTarget(existingCard);
+    closeCard({ restoreFocus: false });
+
+    card.style.visibility = "hidden";
+    card.style.top = "0px";
+    card.style.left = "0px";
+    card.style.position = "fixed";
+    card.style.transform = "translate3d(0, 0, 0)";
+
+    installEscapeHandler(card);
+
+    const handleResize = () => {
+      positionSearchOverlay(card);
     };
-    cLog("contextmenu:capture", lastContextMenuPos);
-  };
-  document.addEventListener("contextmenu", handleContextMenu, true);
-  registerCleanup(() => document.removeEventListener("contextmenu", handleContextMenu, true));
+    window.addEventListener("resize", handleResize);
+    mergeCardCleanup(card, () => window.removeEventListener("resize", handleResize));
+
+    root.appendChild(card);
+    positionSearchOverlay(card);
+
+    const input = getSearchInput(card);
+    const focused = await settleFocus(input);
+
+    return {
+      card,
+      input,
+      opened: true,
+      focused,
+    };
+  }
 
   async function hydrateSettings() {
     const payload = await chrome.storage.local.get("settings");
@@ -350,13 +435,14 @@ export function startSynopsisContentScript() {
   }
 
   const handleSlashShortcut = (event: KeyboardEvent) => {
-    if (event.defaultPrevented) return;
     if (isEditableTarget(event.target)) return;
     if (!isShortcutMatch(event, searchShortcutKey)) return;
 
     event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
     cLog("shortcut:manualSearch:open", { shortcutKey: searchShortcutKey });
-    showSearchInput();
+    void showSearchInput();
   };
   document.addEventListener("keydown", handleSlashShortcut, true);
   registerCleanup(() => document.removeEventListener("keydown", handleSlashShortcut, true));
@@ -436,27 +522,17 @@ export function startSynopsisContentScript() {
     return card;
   }
 
-  function metadataRow(result: LookupDisplayResult) {
-    const row = document.createElement("div");
-    row.className = "vs-meta";
+  function metadataLine(result: LookupDisplayResult) {
+    const line = document.createElement("p");
+    line.className = "vs-meta-line";
 
-    const chips = [];
-    chips.push(result.mediaType?.toUpperCase() || "MEDIA");
-    if (result.year) chips.push(String(result.year));
-    if (result.author) chips.push(`Author: ${result.author}`);
-    if (result.directorOrCreator) chips.push(`Director/Creator: ${result.directorOrCreator}`);
-    if (Array.isArray(result.cast) && result.cast.length) chips.push(`Cast: ${result.cast.slice(0, 3).join(", ")}`);
+    const parts: string[] = [];
+    if (result.year) parts.push(String(result.year));
+    if (result.directorOrCreator) parts.push(`Dir. ${result.directorOrCreator}`);
+    else if (result.author) parts.push(result.author);
 
-    chips.forEach((text) => {
-      const chip = document.createElement("span");
-      chip.className = "vs-chip";
-      chip.textContent = text;
-      row.appendChild(chip);
-    });
-
-    row.appendChild(createGoogleSearchChip(result));
-
-    return row;
+    line.textContent = parts.join(" · ");
+    return line;
   }
 
   function buildGoogleSearchQuery(result: LookupDisplayResult) {
@@ -465,22 +541,27 @@ export function startSynopsisContentScript() {
     return [title, year].filter(Boolean).join(" ");
   }
 
-  function createExternalLinkIcon() {
+  function createSvgIcon(viewBox: string, pathD: string, className: string) {
     const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    icon.setAttribute("viewBox", "0 0 16 16");
+    icon.setAttribute("viewBox", viewBox);
     icon.setAttribute("aria-hidden", "true");
     icon.setAttribute("focusable", "false");
-    icon.classList.add("vs-chip-icon");
+    icon.classList.add(className);
 
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute(
-      "d",
-      "M9.5 2h4v4h-1.5V4.56L7.28 9.28 6.22 8.22 10.94 3.5H9.5V2ZM3.5 4.5h4V6h-4A.5.5 0 0 0 3 6.5v6a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5v-4h1.5v4A2 2 0 0 1 9.5 14h-6A2 2 0 0 1 1.5 12.5v-6A2 2 0 0 1 3.5 4.5Z",
-    );
+    path.setAttribute("d", pathD);
     path.setAttribute("fill", "currentColor");
 
     icon.appendChild(path);
     return icon;
+  }
+
+  function createExternalLinkIcon() {
+    return createSvgIcon(
+      "0 0 16 16",
+      "M9.5 2h4v4h-1.5V4.56L7.28 9.28 6.22 8.22 10.94 3.5H9.5V2ZM3.5 4.5h4V6h-4A.5.5 0 0 0 3 6.5v6a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5v-4h1.5v4A2 2 0 0 1 9.5 14h-6A2 2 0 0 1 1.5 12.5v-6A2 2 0 0 1 3.5 4.5Z",
+      "vs-chip-icon",
+    );
   }
 
   function createActionChip(label: string, onClick: () => void | Promise<void>, options: ActionButtonOptions = {}) {
@@ -503,6 +584,58 @@ export function startSynopsisContentScript() {
     return button;
   }
 
+  function createHeaderIconButton(
+    ariaLabel: string,
+    iconViewBox: string,
+    iconPathD: string,
+    onClick: () => void | Promise<void>,
+    extraClass?: string,
+  ) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `vs-header-action${extraClass ? ` ${extraClass}` : ""}`;
+    button.setAttribute("aria-label", ariaLabel);
+
+    button.appendChild(createSvgIcon(iconViewBox, iconPathD, "vs-header-action-icon"));
+
+    button.addEventListener("click", () => {
+      void onClick();
+    });
+    return button;
+  }
+
+  function createGoogleSearchButton(result: LookupDisplayResult) {
+    return createHeaderIconButton(
+      `Search Google for ${buildGoogleSearchQuery(result) || "this title"}`,
+      "0 0 16 16",
+      "M9.5 2h4v4h-1.5V4.56L7.28 9.28 6.22 8.22 10.94 3.5H9.5V2ZM3.5 4.5h4V6h-4A.5.5 0 0 0 3 6.5v6a.5.5 0 0 0 .5.5h6a.5.5 0 0 0 .5-.5v-4h1.5v4A2 2 0 0 1 9.5 14h-6A2 2 0 0 1 1.5 12.5v-6A2 2 0 0 1 3.5 4.5Z",
+      async () => {
+        const query = buildGoogleSearchQuery(result);
+        const response = await openGoogleSearch(query);
+        if (response?.status !== "ok") {
+          showError(response?.message || "Could not open Google search.");
+        }
+      },
+      "vs-header-action--google",
+    );
+  }
+
+  function createWrongMatchButton(result: LookupDisplayResult) {
+    // Refresh/swap icon (two arrows forming a cycle)
+    return createHeaderIconButton(
+      "Wrong match? See alternatives",
+      "0 0 16 16",
+      "M13.65 2.35a1 1 0 0 0-1.3 0L10 4.71V3a1 1 0 0 0-2 0v4a1 1 0 0 0 1 1h4a1 1 0 0 0 0-2h-1.71l2.36-2.35a1 1 0 0 0 0-1.3ZM2.35 13.65a1 1 0 0 0 1.3 0L6 11.29V13a1 1 0 0 0 2 0V9a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1.71l-2.36 2.35a1 1 0 0 0 0 1.3Z",
+      () => {
+        showAlternativeMatches(result).catch((error) => {
+          cLog("wrongMatch:error", { message: error?.message || String(error) });
+          showError("Could not load alternative matches.");
+        });
+      },
+      "vs-header-action--reselect",
+    );
+  }
+
   function createGoogleSearchChip(result: LookupDisplayResult) {
     return createActionChip(
       "Google",
@@ -519,276 +652,6 @@ export function startSynopsisContentScript() {
         withExternalIcon: true,
       },
     );
-  }
-
-  function mediaTypeDisplayLabel(mediaType: string | undefined) {
-    if (mediaType === "movie") return "Movie";
-    if (mediaType === "tv") return "TV";
-    if (mediaType === "book") return "Book";
-    return "Media";
-  }
-
-  function createEditorialCloseButton() {
-    const close = document.createElement("button");
-    close.className = "vs-editorial-close";
-    close.type = "button";
-    close.textContent = "Close";
-    close.setAttribute("aria-label", "Close synopsis card");
-    close.addEventListener("click", () => closeCard());
-    return close;
-  }
-
-  function createEditorialBrand(title: string) {
-    const wrap = document.createElement("div");
-    wrap.className = "vs-editorial-brand";
-
-    if (BRAND_ICON_URL) {
-      const mark = document.createElement("img");
-      mark.className = "vs-editorial-brand-mark";
-      mark.src = BRAND_ICON_URL;
-      mark.alt = "";
-      wrap.appendChild(mark);
-    }
-
-    const copy = document.createElement("div");
-    copy.className = "vs-editorial-brand-copy";
-
-    const name = document.createElement("p");
-    name.className = "vs-editorial-brand-name";
-    name.textContent = "Vivaldi Synopsis";
-
-    const heading = document.createElement("h2");
-    heading.className = "vs-editorial-title";
-    heading.textContent = title;
-
-    copy.append(name, heading);
-    wrap.appendChild(copy);
-    return wrap;
-  }
-
-  function buildEditorialShell({ kind, title, subtitle, ariaLabel }: EditorialShellOptions) {
-    const card = document.createElement("section");
-    card.id = CARD_ID;
-    card.className = `vs-card vs-card--editorial vs-card--editorial-${kind}`;
-    card.tabIndex = -1;
-    card.setAttribute("role", "dialog");
-    card.setAttribute("aria-label", ariaLabel || title);
-
-    const masthead = document.createElement("header");
-    masthead.className = "vs-editorial-masthead";
-    masthead.append(createEditorialBrand(title), createEditorialCloseButton());
-    card.appendChild(masthead);
-
-    if (subtitle) {
-      const sub = document.createElement("p");
-      sub.className = "vs-editorial-sub";
-      sub.textContent = subtitle;
-      card.appendChild(sub);
-    }
-
-    return card;
-  }
-
-  function createEditorialSectionTitle(text: string) {
-    const label = document.createElement("p");
-    label.className = "vs-editorial-section-title";
-    label.textContent = text;
-    return label;
-  }
-
-  function createEditorialNote(text: string) {
-    const note = document.createElement("p");
-    note.className = "vs-editorial-note";
-    note.textContent = text;
-    return note;
-  }
-
-  function createEditorialStatus(message: string, tone = "info") {
-    const status = document.createElement("p");
-    status.className = `vs-editorial-status vs-editorial-status--${tone}`;
-    status.textContent = message;
-    return status;
-  }
-
-  function createEditorialActionButton(label: string, onClick: () => void | Promise<void>, options: ActionButtonOptions = {}) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `vs-editorial-button${options.secondary ? " vs-editorial-button--ghost" : ""}`;
-    button.textContent = label;
-    button.addEventListener("click", () => {
-      void onClick();
-    });
-
-    if (options.withExternalIcon) {
-      button.appendChild(createExternalLinkIcon());
-      button.classList.add("vs-editorial-button--external");
-    }
-
-    return button;
-  }
-
-  function appendEditorialFact(container: HTMLElement, labelText: string, valueText: string) {
-    if (!valueText) return;
-
-    const row = document.createElement("div");
-    row.className = "vs-editorial-fact";
-
-    const label = document.createElement("p");
-    label.className = "vs-editorial-fact-label";
-    label.textContent = labelText;
-
-    const value = document.createElement("p");
-    value.className = "vs-editorial-fact-value";
-    value.textContent = valueText;
-
-    row.append(label, value);
-    container.appendChild(row);
-  }
-
-  function buildEditorialFacts(result: LookupDisplayResult) {
-    const facts = document.createElement("div");
-    facts.className = "vs-editorial-facts";
-
-    appendEditorialFact(facts, "Type", mediaTypeDisplayLabel(result.mediaType));
-    appendEditorialFact(facts, "Year", result.year ? String(result.year) : "");
-    appendEditorialFact(facts, "Creator", result.author || result.directorOrCreator || "");
-    appendEditorialFact(facts, "Cast", Array.isArray(result.cast) && result.cast.length ? result.cast.slice(0, 3).join(", ") : "");
-    appendEditorialFact(facts, "Genre", result.genreLabel || "Unknown");
-    appendEditorialFact(facts, "Sources", `${result.sourceAttribution || "Unknown"}${result.fromCache ? " (cached)" : ""}`);
-
-    return facts;
-  }
-
-  function buildEditorialPanelMeta(result: LookupDisplayResult) {
-    const meta = document.createElement("div");
-    meta.className = "vs-editorial-panel-meta";
-
-    const items = [
-      ["Type", mediaTypeDisplayLabel(result.mediaType)],
-      ["Year", result.year ? String(result.year) : "Unknown"],
-      ["Genre", result.genreLabel || "Unknown"],
-      ["Source", `${result.sourceAttribution || "Unknown"}${result.fromCache ? " (cached)" : ""}`],
-    ];
-
-    items.forEach(([labelText, valueText]) => {
-      const item = document.createElement("div");
-      item.className = "vs-editorial-panel-stat";
-
-      const label = document.createElement("p");
-      label.className = "vs-editorial-panel-stat-label";
-      label.textContent = labelText;
-
-      const value = document.createElement("p");
-      value.className = "vs-editorial-panel-stat-value";
-      value.textContent = valueText;
-
-      item.append(label, value);
-      meta.appendChild(item);
-    });
-
-    return meta;
-  }
-
-  function buildEditorialPanelSupport(result: LookupDisplayResult, options: ResultDisplayOptions = {}) {
-    const lines: string[] = [];
-
-    if (options.autoResolved) {
-      lines.push("Resolved automatically from the current selection.");
-    }
-
-    const creator = result.author || result.directorOrCreator;
-    if (creator) {
-      lines.push(`Creator: ${creator}`);
-    }
-
-    if (Array.isArray(result.cast) && result.cast.length) {
-      lines.push(`Cast: ${result.cast.slice(0, 3).join(", ")}`);
-    }
-
-    if (!lines.length) return null;
-
-    const support = document.createElement("p");
-    support.className = "vs-editorial-panel-support";
-    support.textContent = lines.join("  •  ");
-    return support;
-  }
-
-  function buildEditorialPlaceholderPane(result: LookupDisplayResult) {
-    const wrapper = document.createElement("div");
-    wrapper.className = "vs-editorial-artwork-placeholder";
-
-    const title = document.createElement("p");
-    title.className = "vs-editorial-artwork-title";
-    title.textContent = buildNoArtTitle(result.title);
-
-    const divider = document.createElement("div");
-    divider.className = "vs-editorial-artwork-divider";
-
-    const year = document.createElement("p");
-    year.className = "vs-editorial-artwork-year";
-    year.textContent = result.year ? String(result.year) : mediaTypeDisplayLabel(result.mediaType);
-
-    wrapper.append(title, divider, year);
-    return wrapper;
-  }
-
-  function buildEditorialArtworkPane(result: LookupDisplayResult) {
-    const frame = document.createElement("section");
-    frame.className = "vs-editorial-artwork";
-
-    if (!result.artworkUrl) {
-      frame.appendChild(buildEditorialPlaceholderPane(result));
-      return frame;
-    }
-
-    const image = document.createElement("img");
-    image.className = "vs-editorial-artwork-image";
-    image.alt = `${result.title || "Artwork"} artwork`;
-    image.src = result.artworkUrl;
-    image.addEventListener("error", () => {
-      frame.textContent = "";
-      frame.appendChild(buildEditorialPlaceholderPane(result));
-    });
-
-    frame.appendChild(image);
-    return frame;
-  }
-
-  function buildEditorialActionRow(result: LookupDisplayResult, options: ResultDisplayOptions = {}) {
-    const row = document.createElement("div");
-    row.className = "vs-editorial-actions";
-
-    const canChooseAnother =
-      options.autoResolved &&
-      (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
-
-    if (canChooseAnother) {
-      row.appendChild(
-        createEditorialActionButton("Wrong Match?", () => {
-          showAlternativeMatches(result).catch((error) => {
-            cLog("wrongMatch:error", { message: error?.message || String(error) });
-            showError("Could not load alternative matches.");
-          });
-        }),
-      );
-    }
-
-    row.appendChild(
-      createEditorialActionButton(
-        "Google",
-        async () => {
-          const query = buildGoogleSearchQuery(result);
-          const response = await openGoogleSearch(query);
-
-          if (response?.status !== "ok") {
-            showError(response?.message || "Could not open Google search.");
-          }
-        },
-        { secondary: true, withExternalIcon: true },
-      ),
-    );
-
-    return row;
   }
 
   function buildNoArtTitle(title: string | undefined) {
@@ -849,274 +712,7 @@ export function startSynopsisContentScript() {
     container.appendChild(image);
   }
 
-  function showEditorialLoading(query: string) {
-    const card = buildEditorialShell({
-      kind: "loading",
-      title: "Getting synopsis",
-      subtitle: query ? `Working on "${query}" now.` : "Working on your title now.",
-      ariaLabel: "Getting synopsis",
-    });
-
-    card.appendChild(createEditorialSectionTitle("Status"));
-    card.appendChild(createEditorialStatus("Searching providers and assembling a spoiler-safe summary.", "info"));
-
-    const shimmer = document.createElement("div");
-    shimmer.className = "vs-editorial-loading";
-    shimmer.innerHTML = '<span></span><span></span><span></span>';
-
-    card.appendChild(shimmer);
-    mountCard(card);
-  }
-
-  function showEditorialCompactResult(result: LookupDisplayResult) {
-    const card = buildEditorialShell({
-      kind: "compact-result",
-      title: result.title || "Synopsis",
-      subtitle: `${mediaTypeDisplayLabel(result.mediaType)}${result.year ? ` • ${result.year}` : ""}`,
-      ariaLabel: result.title || "Synopsis",
-    });
-
-    const section = document.createElement("section");
-    section.className = "vs-editorial-section";
-    section.appendChild(createEditorialSectionTitle("Synopsis"));
-
-    const synopsis = document.createElement("p");
-    synopsis.className = "vs-editorial-copy";
-    synopsis.textContent = result.synopsis || "";
-    section.appendChild(synopsis);
-
-    card.appendChild(section);
-
-    const notes = document.createElement("section");
-    notes.className = "vs-editorial-section";
-    notes.appendChild(createEditorialSectionTitle("Lookup notes"));
-    notes.appendChild(buildEditorialFacts(result));
-    card.appendChild(notes);
-
-    card.appendChild(buildEditorialActionRow(result));
-    mountCard(card);
-  }
-
-  function showEditorialSearchInput() {
-    cLog("showEditorialSearchInput:start", { anchor: lastContextMenuPos });
-    const card = buildEditorialShell({
-      kind: "search",
-      title: "Search this page",
-      subtitle: "Type a book, movie, or TV title and I will try the exact same lookup flow from here.",
-      ariaLabel: "Manual synopsis search",
-    });
-    const openedAt = Date.now();
-
-    const form = document.createElement("form");
-    form.className = "vs-editorial-search-form";
-
-    const title = createEditorialSectionTitle("Title");
-    form.appendChild(title);
-
-    const row = document.createElement("div");
-    row.className = "vs-editorial-search-row";
-
-    const input = document.createElement("input");
-    input.className = "vs-editorial-search-input";
-    input.type = "text";
-    input.placeholder = "Search book, movie, or TV title...";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    input.setAttribute("aria-label", "Search title");
-
-    const submit = document.createElement("button");
-    submit.type = "submit";
-    submit.className = "vs-editorial-button";
-    submit.textContent = "Search";
-
-    row.append(input, submit);
-    form.appendChild(row);
-    form.appendChild(createEditorialNote("Use the title as it appears on the page for the best match."));
-
-    const closeIfOutside = (event: MouseEvent) => {
-      if (Date.now() - openedAt < 280) return;
-      if (!(event.target instanceof Node) || !card.contains(event.target)) {
-        cLog("showEditorialSearchInput:close:outsideClick");
-        closeCard();
-      }
-    };
-
-    const cleanup = () => {
-      document.removeEventListener("mousedown", closeIfOutside, true);
-    };
-    mergeCardCleanup(card, cleanup);
-
-    setTimeout(() => {
-      document.addEventListener("mousedown", closeIfOutside, true);
-    }, 0);
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const query = input.value.trim();
-      if (!query) return;
-      await runLookupQuery(query);
-    });
-
-    card.appendChild(form);
-
-    const fallbackPos = {
-      left: window.scrollX + Math.max(20, (window.innerWidth - 480) / 2),
-      top: window.scrollY + 64,
-    };
-    mountCard(card, { anchorPos: lastContextMenuPos || fallbackPos });
-  }
-
-  function showEditorialPanelResult(result: LookupDisplayResult, options: ResultDisplayOptions = {}) {
-    const card = buildEditorialShell({
-      kind: "panel",
-      title: result.title || "Synopsis",
-      subtitle: null,
-      ariaLabel: result.title || "Synopsis result",
-    });
-
-    const layout = document.createElement("div");
-    layout.className = "vs-editorial-grid";
-
-    const main = document.createElement("section");
-    main.className = "vs-editorial-main";
-    main.appendChild(buildEditorialPanelMeta(result));
-
-    const support = buildEditorialPanelSupport(result, options);
-    if (support) {
-      main.appendChild(support);
-    }
-
-    const synopsis = document.createElement("p");
-    synopsis.className = "vs-editorial-copy";
-    synopsis.textContent = result.synopsis || "";
-    main.appendChild(synopsis);
-
-    main.appendChild(buildEditorialActionRow(result, options));
-
-    const aside = document.createElement("aside");
-    aside.className = "vs-editorial-aside";
-    aside.appendChild(buildEditorialArtworkPane(result));
-
-    layout.append(main, aside);
-    card.appendChild(layout);
-    mountCard(card);
-  }
-
-  function appendEditorialCandidateButtons({ requestId, originalQuery, container, items }: CandidateButtonGroup) {
-    items.forEach((candidate: Candidate, index: number) => {
-      const button = document.createElement("button");
-      button.className = "vs-editorial-choice";
-      button.type = "button";
-
-      const text = document.createElement("span");
-      text.className = "vs-editorial-choice-text";
-      text.textContent = candidateLabel(candidate);
-
-      const rank = document.createElement("span");
-      rank.className = "vs-editorial-choice-rank";
-      rank.textContent = `#${index + 1}`;
-      rank.setAttribute("aria-hidden", "true");
-
-      button.append(text, rank);
-      button.addEventListener("click", async () => {
-        showLoading(candidate.title);
-
-        const response = await resolveAmbiguityRequest(requestId, candidate.id, originalQuery);
-
-        if (response?.status === "ok" && response.result) {
-          showResult(response.result, { autoResolved: false });
-        } else {
-          showError(response?.message || "Could not resolve your selection.", { errorCode: response?.errorCode });
-        }
-      });
-
-      container.appendChild(button);
-    });
-  }
-
-  function appendEditorialCandidateGroup({ requestId, originalQuery, parent, label, items }: EditorialChoiceGroup) {
-    if (!items.length) return;
-
-    const group = document.createElement("section");
-    group.className = "vs-editorial-section vs-editorial-section--group";
-
-    if (label) {
-      group.appendChild(createEditorialSectionTitle(label));
-    }
-
-    const list = document.createElement("div");
-    list.className = "vs-editorial-choice-list";
-    appendEditorialCandidateButtons({ requestId, originalQuery, container: list, items });
-    group.appendChild(list);
-    parent.appendChild(group);
-  }
-
-  function showEditorialAmbiguous({ requestId, candidates, originalQuery, note }: AmbiguousPayload) {
-    const card = buildEditorialShell({
-      kind: "ambiguous",
-      title: "Pick the right title",
-      subtitle: `Multiple matches turned up for "${originalQuery}".`,
-      ariaLabel: "Pick the right title",
-    });
-
-    if (note) {
-      card.appendChild(createEditorialStatus(note, "warning"));
-    }
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "vs-editorial-groups";
-
-    const moviesTv = candidates.filter((candidate) => candidate.mediaType === "movie" || candidate.mediaType === "tv");
-    const books = candidates.filter((candidate) => candidate.mediaType === "book");
-    const others = candidates.filter((candidate) => candidate.mediaType !== "movie" && candidate.mediaType !== "tv" && candidate.mediaType !== "book");
-
-    if (moviesTv.length && books.length) {
-      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Movies and TV", items: moviesTv });
-      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Books", items: books });
-      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Other", items: others });
-    } else {
-      appendEditorialCandidateGroup({ requestId, originalQuery, parent: wrapper, label: "Matches", items: candidates });
-    }
-
-    card.appendChild(wrapper);
-    mountCard(card);
-  }
-
-  function showEditorialError(message: string, options: ErrorDisplayOptions = {}) {
-    const card = buildEditorialShell({
-      kind: "error",
-      title: "Synopsis unavailable",
-      subtitle: "The lookup could not finish cleanly this time.",
-      ariaLabel: "Synopsis unavailable",
-    });
-
-    card.appendChild(createEditorialStatus(message || "Something went wrong. Try again.", "error"));
-
-    const actions = buildErrorActions(options.errorCode, options);
-    if (actions.length) {
-      const row = document.createElement("div");
-      row.className = "vs-editorial-actions";
-
-      actions.forEach((action) => {
-        row.appendChild(
-          createEditorialActionButton(action.label, action.run, {
-            secondary: Boolean(action.secondary),
-          }),
-        );
-      });
-
-      card.appendChild(row);
-    }
-
-    mountCard(card);
-  }
-
   function showLoading(query: string) {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialLoading(query);
-      return;
-    }
-
     const card = buildCompactShell("Getting Synopsis");
 
     const sub = document.createElement("p");
@@ -1127,18 +723,13 @@ export function startSynopsisContentScript() {
     shimmer.className = "vs-shimmer";
 
     card.append(sub, shimmer);
-    mountCard(card);
+    mountAnchoredCard(card);
   }
 
   function showCompactResult(result: LookupDisplayResult) {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialCompactResult(result);
-      return;
-    }
-
     const card = buildCompactShell(result.title || "Synopsis");
 
-    const meta = metadataRow(result);
+    const meta = metadataLine(result);
 
     const synopsis = document.createElement("p");
     synopsis.className = "vs-synopsis";
@@ -1149,19 +740,47 @@ export function startSynopsisContentScript() {
     foot.textContent = `Sources: ${result.sourceAttribution}${result.fromCache ? " (cached)" : ""}`;
 
     card.append(meta, synopsis, foot);
-    mountCard(card);
+    mountAnchoredCard(card);
   }
 
-  function showSearchInput() {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialSearchInput();
-      return;
+  function installSearchKeyboardIsolation(card: ContentCardElement) {
+    const captureTypes: Array<"keydown" | "keypress" | "keyup"> = ["keydown", "keypress", "keyup"];
+
+    const stopSearchKeyPropagation = (event: KeyboardEvent) => {
+      if (!(event.target instanceof Node) || !card.contains(event.target)) return;
+      if (!shouldCaptureSearchOverlayKey(event)) return;
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+
+    captureTypes.forEach((eventName) => {
+      window.addEventListener(eventName, stopSearchKeyPropagation, true);
+      document.addEventListener(eventName, stopSearchKeyPropagation, true);
+    });
+
+    mergeCardCleanup(card, () => {
+      captureTypes.forEach((eventName) => {
+        window.removeEventListener(eventName, stopSearchKeyPropagation, true);
+        document.removeEventListener(eventName, stopSearchKeyPropagation, true);
+      });
+    });
+  }
+
+  async function showSearchInput(): Promise<SearchOverlayAck> {
+    const existing = getExistingSearchCard();
+    if (existing) {
+      positionSearchOverlay(existing);
+      const focused = await settleFocus(getSearchInput(existing));
+      return {
+        ok: focused,
+        opened: true,
+        focused,
+      };
     }
 
-    cLog("showSearchInput:start", { anchor: lastContextMenuPos });
     const card = document.createElement("section");
     card.id = CARD_ID;
-    card.className = "vs-card vs-card--search";
+    card.className = "vs-card vs-card--search vs-card--search-overlay";
     card.tabIndex = -1;
     card.setAttribute("role", "dialog");
     card.setAttribute("aria-label", "Manual synopsis search");
@@ -1177,19 +796,42 @@ export function startSynopsisContentScript() {
     input.autocomplete = "off";
     input.spellcheck = false;
     input.setAttribute("aria-label", "Search title");
+    input.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+      void settleFocus(input);
+    });
+    input.addEventListener("click", (event) => {
+      event.stopPropagation();
+      void settleFocus(input);
+    });
     form.append(input);
     card.append(form);
+    installSearchKeyboardIsolation(card);
+
+    const refocusSearchInput = (event: Event) => {
+      if (!(event.target instanceof Node) || !card.contains(event.target)) return;
+      event.stopPropagation();
+      if (event.target !== input) {
+        event.preventDefault();
+      }
+      void settleFocus(input);
+    };
+    card.addEventListener("pointerdown", refocusSearchInput, true);
+    card.addEventListener("mousedown", refocusSearchInput, true);
+    card.addEventListener("click", refocusSearchInput, true);
 
     const closeIfOutside = (event: MouseEvent) => {
       if (Date.now() - openedAt < 280) return;
       if (!(event.target instanceof Node) || !card.contains(event.target)) {
-        cLog("showSearchInput:close:outsideClick");
         closeCard();
       }
     };
 
     const cleanup = () => {
       document.removeEventListener("mousedown", closeIfOutside, true);
+      card.removeEventListener("pointerdown", refocusSearchInput, true);
+      card.removeEventListener("mousedown", refocusSearchInput, true);
+      card.removeEventListener("click", refocusSearchInput, true);
     };
     mergeCardCleanup(card, cleanup);
 
@@ -1208,11 +850,12 @@ export function startSynopsisContentScript() {
       await runLookupQuery(query);
     });
 
-    const fallbackPos = {
-      left: window.scrollX + Math.max(20, (window.innerWidth - 520) / 2),
-      top: window.scrollY + 64,
+    const mounted = await mountSearchOverlay(card);
+    return {
+      ok: mounted.opened && mounted.focused,
+      opened: mounted.opened,
+      focused: mounted.focused,
     };
-    mountCard(card, { anchorPos: lastContextMenuPos || fallbackPos });
   }
 
   async function runLookupQuery(query: string, options: LookupRunOptions = {}) {
@@ -1268,7 +911,7 @@ export function startSynopsisContentScript() {
     const actions: ErrorAction[] = [
       {
         label: "Search manually",
-        run: () => showSearchInput(),
+        run: () => void showSearchInput(),
       },
     ];
 
@@ -1315,11 +958,6 @@ export function startSynopsisContentScript() {
   }
 
   function showPanelResult(result: LookupDisplayResult, options: ResultDisplayOptions = {}) {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialPanelResult(result, options);
-      return;
-    }
-
     const card = buildPanelShell();
     if (ENABLE_HYBRID_PANEL_BALANCE) {
       card.classList.add("vs-card--panel-hybrid");
@@ -1338,6 +976,19 @@ export function startSynopsisContentScript() {
     title.className = "vs-title";
     title.textContent = result.title || "Synopsis";
 
+    const headerActions = document.createElement("div");
+    headerActions.className = "vs-header-actions";
+
+    headerActions.appendChild(createGoogleSearchButton(result));
+
+    const canShowWrongMatch =
+      options.autoResolved &&
+      (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
+
+    if (canShowWrongMatch) {
+      headerActions.appendChild(createWrongMatchButton(result));
+    }
+
     const close = document.createElement("button");
     close.className = "vs-close";
     close.type = "button";
@@ -1345,47 +996,10 @@ export function startSynopsisContentScript() {
     close.setAttribute("aria-label", "Close synopsis card");
     close.addEventListener("click", () => closeCard());
 
-    header.append(title, close);
+    headerActions.appendChild(close);
+    header.append(title, headerActions);
 
-    const chips = document.createElement("div");
-    chips.className = "vs-meta";
-
-    const mediaTag = result.primaryTag || (result.mediaType ? String(result.mediaType).toUpperCase() : "MEDIA");
-    const yearTag = result.secondaryTag || (result.year ? String(result.year) : undefined);
-    const creatorTag =
-      result.directorOrCreatorTag ||
-      result.authorTag ||
-      (result.directorOrCreator ? `DIRECTOR/CREATOR: ${String(result.directorOrCreator).toUpperCase()}` : undefined) ||
-      (result.author ? `AUTHOR: ${String(result.author).toUpperCase()}` : undefined);
-    const castTag =
-      result.castTag ||
-      (Array.isArray(result.cast) && result.cast.length
-        ? `CAST: ${result.cast.slice(0, 4).join(", ").toUpperCase()}`
-        : undefined);
-
-    [mediaTag, yearTag, creatorTag, castTag].forEach((text) => {
-      if (!text) return;
-      const chip = document.createElement("span");
-      chip.className = "vs-chip";
-      chip.textContent = text;
-      chips.appendChild(chip);
-    });
-
-    const canShowWrongMatchChip =
-      options.autoResolved &&
-      (result.canChooseAnother !== false || Boolean(result.reselectRequestId) || Boolean(result.lookupQuery));
-
-    if (canShowWrongMatchChip) {
-      const wrongMatch = createActionChip("Wrong match?", () => {
-        showAlternativeMatches(result).catch((error) => {
-          cLog("wrongMatch:error", { message: error?.message || String(error) });
-          showError("Could not load alternative matches.");
-        });
-      });
-      chips.appendChild(wrongMatch);
-    }
-
-    chips.appendChild(createGoogleSearchChip(result));
+    const meta = metadataLine(result);
 
     const autoNote = options.autoResolved ? createAutoResolvedNote() : null;
 
@@ -1412,13 +1026,13 @@ export function startSynopsisContentScript() {
 
     footerRow.append(foot, genre);
 
-    left.append(header, chips);
+    left.append(header, meta);
     if (autoNote) left.appendChild(autoNote);
     left.append(synopsis, footerRow);
     renderPanelArtwork(right, result);
 
     card.append(left, right);
-    mountCard(card);
+    mountAnchoredCard(card);
   }
 
   function showResult(result: LookupDisplayResult, options: ResultDisplayOptions = {}) {
@@ -1472,11 +1086,6 @@ export function startSynopsisContentScript() {
   }
 
   function showAmbiguous({ requestId, candidates, originalQuery, note }: AmbiguousPayload) {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialAmbiguous({ requestId, candidates, originalQuery, note });
-      return;
-    }
-
     const card = buildCompactShell("Pick the Right Title");
 
     const help = document.createElement("p");
@@ -1522,15 +1131,10 @@ export function startSynopsisContentScript() {
       card.appendChild(noteEl);
     }
     card.append(list);
-    mountCard(card);
+    mountAnchoredCard(card);
   }
 
   function showError(message: string, options: ErrorDisplayOptions = {}) {
-    if (editorialSynopsisPopupEnabled) {
-      showEditorialError(message, options);
-      return;
-    }
-
     const card = buildCompactShell("Synopsis Unavailable");
     const actions = buildErrorActions(options.errorCode, options);
 
@@ -1555,7 +1159,7 @@ export function startSynopsisContentScript() {
       card.appendChild(row);
     }
 
-    mountCard(card);
+    mountAnchoredCard(card);
   }
 
   const handleRuntimeMessage = (
@@ -1574,10 +1178,17 @@ export function startSynopsisContentScript() {
     }
 
     if (message.type === "SHOW_SEARCH_INPUT") {
-      showSearchInput();
-      if (typeof sendResponse === "function") {
-        sendResponse({ ok: true });
-      }
+      void showSearchInput()
+        .then((ack) => {
+          if (typeof sendResponse === "function") {
+            sendResponse(ack);
+          }
+        })
+        .catch(() => {
+          if (typeof sendResponse === "function") {
+            sendResponse({ ok: false, opened: false, focused: false });
+          }
+        });
       return true;
     }
 

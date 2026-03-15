@@ -15,7 +15,3 @@ test("default settings enable Goodreads visual fallback on localhost", () => {
   assert.equal(DEFAULT_SETTINGS.goodreadsVisualFallbackEnabled, true);
   assert.equal(DEFAULT_SETTINGS.goodreadsHelperUrl, "http://127.0.0.1:4317");
 });
-
-test("default settings keep the editorial synopsis popup enabled", () => {
-  assert.equal(DEFAULT_SETTINGS.editorialSynopsisPopupEnabled, true);
-});

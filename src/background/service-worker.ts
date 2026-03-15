@@ -111,7 +111,8 @@ function sendMessageWithAck(tabId: number, payload: ContentUiMessage): Promise<b
         return;
       }
       swLog("sendMessageWithAck:response", { tabId, type: payload?.type, response });
-      resolve(Boolean(response?.ok));
+      const searchReady = payload?.type !== "SHOW_SEARCH_INPUT" || (response?.opened === true && response?.focused === true);
+      resolve(Boolean(response?.ok && searchReady));
     });
   });
 }
@@ -135,11 +136,9 @@ function pingUi(tabId: number): Promise<ContentScriptAckResponse | null> {
   });
 }
 
-function buildSynopsisUiFlags(settings: Awaited<ReturnType<typeof getSettings>>) {
-  const editorialSynopsisPopup = settings.editorialSynopsisPopupEnabled !== false;
+function buildSynopsisUiFlags() {
   return {
-    editorialSynopsisPopup,
-    version: getSynopsisPopupUiFlagVersion(editorialSynopsisPopup),
+    version: getSynopsisPopupUiFlagVersion(),
   };
 }
 
@@ -171,8 +170,7 @@ async function injectUiAssets(tabId: number): Promise<boolean> {
 
 async function ensureUiAssets(tabId: number): Promise<boolean> {
   if (!hasTabId(tabId)) return false;
-  const settings = await getSettings();
-  const flags = buildSynopsisUiFlags(settings);
+  const flags = buildSynopsisUiFlags();
 
   let ping = await pingUi(tabId);
   const alreadyReady = Boolean(ping?.ok) && ping?.uiFlagVersion === flags.version;

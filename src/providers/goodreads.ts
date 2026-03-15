@@ -172,7 +172,6 @@ export async function fetchGoodreadsFallback(
     localOnlyMode: false,
     searchShortcutKey: "\\",
     resultUiMode: "with_image",
-    editorialSynopsisPopupEnabled: true,
     tmdbApiKey: "",
     goodreadsVisualFallbackEnabled: true,
     goodreadsHelperUrl: GOODREADS_HELPER_URL_DEFAULT,
