@@ -1,7 +1,13 @@
 import { test } from "vitest";
 import assert from "node:assert/strict";
 
-import { buildCacheKey, normalizeQuery, detectHintType, hashString } from "../src/core/normalize";
+import {
+  buildCacheKey,
+  normalizeQuery,
+  detectHintType,
+  hashString,
+  normalizeTitleForCompare,
+} from "../src/core/normalize";
 
 test("normalizeQuery extracts year and strips it from query", () => {
   const normalized = normalizeQuery("Dune (2021) movie");
@@ -15,6 +21,13 @@ test("normalizeQuery strips trailing context noise from highlighted video titles
 
   assert.equal(normalized.hintYear, 2018);
   assert.equal(normalized.query, "Set It Up");
+});
+
+test("normalizeQuery strips quotes and trailer noise from promoted titles", () => {
+  const normalized = normalizeQuery("“Dune: Part Two” - Official Trailer");
+
+  assert.equal(normalized.query, "Dune: Part Two");
+  assert.equal(normalized.hintYear, undefined);
 });
 
 test("normalizeQuery keeps year-only titles intact", () => {
@@ -35,6 +48,10 @@ test("detectHintType identifies media hints", () => {
   assert.equal(detectHintType("best sci fi book"), "book");
   assert.equal(detectHintType("classic tv show"), "tv");
   assert.equal(detectHintType("epic movie"), "movie");
+});
+
+test("normalizeTitleForCompare removes punctuation and extra spacing", () => {
+  assert.equal(normalizeTitleForCompare(" Spider-Man:   No Way Home!! "), "spider man no way home");
 });
 
 test("hashString is deterministic", () => {
